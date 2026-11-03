@@ -1,0 +1,199 @@
+"use client";
+
+import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import { useMemo, useRef, useState, type FormEvent } from "react";
+import { usersApi } from "@/lib/api/endpoints";
+import { qk } from "@/lib/api/query-keys";
+import type { ContactChannel, RestaurantConfig, User } from "@/lib/api/types";
+import { useSession } from "@/lib/auth/session";
+import { channelMeta } from "@/lib/domain/channels";
+import { personName } from "@/lib/format/text";
+import { ChannelDot, Toggle } from "@/components/ui/primitives";
+import { SelectField, TextField } from "@/components/ui/fields";
+import { InlineNotice } from "@/components/ui/state";
+import { TimeoutField } from "./config-fields";
+import { NO_RESPONSIBLE_LABEL, pickValues, responsibleOptions, samantaValues, type SamantaValues } from "./config-form";
+import { validateFields, withoutErrors, type FieldErrors } from "./config-schema";
+import {
+  ConfigGate,
+  PendingNote,
+  ReadOnlyNotice,
+  SaveArea,
+  SettingsCard,
+  TabBody,
+  TabTitle,
+  focusFirstInvalid,
+} from "./config-ui";
+import { useConfigSave, useDraft, useResetOnHide, type ConfigSave } from "./use-config-save";
+
+/** Canales del mockup. El backend no tiene esta configuración: se muestran sin estado. */
+const ASSISTANT_CHANNELS: readonly ContactChannel[] = ["WHATSAPP", "FACEBOOK", "INSTAGRAM", "WEBSITE"];
+
+/** Reglas del mockup. Solo la primera la aplica hoy el backend. */
+const RULES: ReadonlyArray<{ label: string; on: boolean; note: string }> = [
+  {
+    label: "Ofrecer solo servicios activos y precios registrados",
+    on: true,
+    note: "Regla aplicada por el backend (solo servicios activos y aprobados)",
+  },
+  { label: "Transferir a humano en grupos de más de 20 personas", on: false, note: "Pendiente en el backend" },
+  { label: "Proponer otra fecha u horario si el dueño rechaza", on: false, note: "Pendiente en el backend" },
+  { label: "Enviar recordatorio al cliente 24 h antes", on: false, note: "Pendiente en el backend" },
+];
+
+/** Ajustes › Samanta: canales, validación del dueño y reglas. */
+export function SamantaView() {
+  const save = useConfigSave();
+  useResetOnHide(save.reset);
+
+  return (
+    <TabBody>
+      <TabTitle>Samanta</TabTitle>
+      <ConfigGate>{(config) => <SamantaContent config={config} save={save} />}</ConfigGate>
+    </TabBody>
+  );
+}
+
+function SamantaContent({ config, save }: { config: RestaurantConfig; save: ConfigSave }) {
+  const session = useSession();
+  const canEdit = session.can("config.edit");
+
+  return (
+    <>
+      {canEdit ? null : <ReadOnlyNotice />}
+      <SettingsCard title="Canales donde atiende">
+        {ASSISTANT_CHANNELS.map((channel) => {
+          const meta = channelMeta(channel);
+          return (
+            <div key={channel} className="flex items-center justify-between">
+              <span className="flex items-center gap-2 text-[13.5px]">
+                <ChannelDot color={meta.color} short={meta.short} label={meta.label} />
+                {meta.label}
+              </span>
+              <Toggle checked={false} disabled label={`${meta.label}: pendiente en el backend`} />
+            </div>
+          );
+        })}
+        <PendingNote>Pendiente en el backend: hoy solo WhatsApp tiene integración real.</PendingNote>
+      </SettingsCard>
+      <OwnerValidationCard config={config} save={save} canEdit={canEdit} />
+      <SettingsCard title="Reglas">
+        {RULES.map((rule) => (
+          <div key={rule.label} className="flex items-center justify-between gap-4">
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-[13.5px] text-pretty">{rule.label}</span>
+              <PendingNote>{rule.note}</PendingNote>
+            </span>
+            <Toggle checked={rule.on} disabled label={rule.label} />
+          </div>
+        ))}
+      </SettingsCard>
+    </>
+  );
+}
+
+/** Responsable de aprobación y tiempo máximo de respuesta (lo único de Samanta que guarda el backend). */
+function OwnerValidationCard({ config, save, canEdit }: { config: RestaurantConfig; save: ConfigSave; canEdit: boolean }) {
+  const base = useMemo(() => samantaValues(config), [config]);
+  const { values, changed, dirty, update, reset, commit } = useDraft(base);
+  const [errors, setErrors] = useState<FieldErrors>({});
+  const formRef = useRef<HTMLFormElement>(null);
+  // Candidatos: usuarios activos con rol OWNER. Solo ADMIN puede listar usuarios (GET /users).
+  const users = useQuery({ queryKey: qk.users, queryFn: usersApi.list, enabled: canEdit });
+
+  function change(patch: Partial<SamantaValues>) {
+    update(patch);
+    setErrors((current) => withoutErrors(current, ...Object.keys(patch)));
+  }
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!canEdit || !dirty || save.isPending) return;
+    const sent = pickValues(values, changed);
+    const result = validateFields(sent);
+    if (!result.success) {
+      setErrors(result.errors);
+      focusFirstInvalid(formRef.current);
+      return;
+    }
+    setErrors({});
+    const data = result.data;
+    save.mutate({ mode: "update", apply: (current) => ({ ...current, ...data }), onSaved: () => commit(sent) });
+  }
+
+  function discard() {
+    reset();
+    setErrors({});
+    save.reset();
+  }
+
+  const { options, currentInvalid } = responsibleOptions(users.data, config.approvalResponsible);
+  // El responsable guardado ya no es válido: el backend rechazaría cualquier guardado de Ajustes.
+  const staleSelected = canEdit && currentInvalid && values.approvalResponsibleId === config.approvalResponsibleId;
+  const responsibleName = config.approvalResponsible
+    ? personName(config.approvalResponsible.firstName, config.approvalResponsible.lastName)
+    : NO_RESPONSIBLE_LABEL;
+
+  return (
+    <SettingsCard title="Validación del dueño">
+      <form ref={formRef} onSubmit={submit} noValidate className="flex flex-col gap-3.5">
+        {staleSelected ? (
+          <InlineNotice tone="warning">
+            {responsibleName} ya no está activo o perdió el rol Propietario: el backend rechazará los cambios de Ajustes hasta
+            que elijas otro responsable o lo dejes sin responsable.
+          </InlineNotice>
+        ) : null}
+        <div className="grid grid-cols-2 gap-3.5">
+          {canEdit ? (
+            <SelectField
+              label="Responsable de aprobación"
+              value={values.approvalResponsibleId}
+              error={errors.approvalResponsibleId}
+              hint={<OwnersHint users={users} />}
+              onChange={(e) => change({ approvalResponsibleId: e.target.value })}
+            >
+              {options.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </SelectField>
+          ) : (
+            <TextField label="Responsable de aprobación" value={responsibleName} readOnly disabled />
+          )}
+          <TextField
+            label="WhatsApp personal"
+            placeholder="—"
+            disabled
+            hint="Pendiente en el backend: el usuario aún no tiene teléfono personal"
+          />
+          <TimeoutField
+            value={values.responseTimeoutMinutes}
+            error={errors.responseTimeoutMinutes}
+            disabled={!canEdit}
+            onChange={(responseTimeoutMinutes) => change({ responseTimeoutMinutes })}
+          />
+          <TextField label="Si no responde" placeholder="—" disabled hint="Pendiente en el backend" />
+        </div>
+        {canEdit ? (
+          <SaveArea save={save} tab="samanta" dirty={dirty} invalid={Object.keys(errors).length > 0} onDiscard={discard} />
+        ) : null}
+      </form>
+    </SettingsCard>
+  );
+}
+
+/** Estado de la lista de propietarios bajo el selector: cargando, error con Reintentar o la regla. */
+function OwnersHint({ users }: { users: UseQueryResult<User[]> }) {
+  if (users.isError) {
+    return (
+      <>
+        No se pudo cargar la lista de propietarios.{" "}
+        <button type="button" onClick={() => void users.refetch()} className="cursor-pointer font-semibold text-brand hover:underline">
+          Reintentar
+        </button>
+      </>
+    );
+  }
+  return users.isPending ? "Cargando propietarios…" : "Usuarios activos con rol Propietario.";
+}

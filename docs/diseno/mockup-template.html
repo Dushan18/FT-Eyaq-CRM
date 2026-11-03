@@ -1,0 +1,435 @@
+<!--
+  Plantilla decodificada del mockup aprobado "CRM Sabor Mágico.html".
+  Estilos globales del mockup:
+    html,body{margin:0;background:#e8ebf1;font-family:'Plus Jakarta Sans',system-ui,sans-serif;color:#131a2e;-webkit-font-smoothing:antialiased}
+    a{color:#1f3fbf} a:hover{color:#152c8a}
+    *{box-sizing:border-box}
+    input,button{font-family:inherit}
+  `style-hover` = estilo aplicado en :hover. `{{ x }}` = valor calculado en mockup-logic.js (renderVals / views).
+-->
+<div style="height:100vh;min-height:720px;min-width:1240px;padding:16px;display:grid;grid-template-columns:76px minmax(0,1fr);grid-template-rows:minmax(0,1fr);gap:12px">
+
+  <!-- ===================== NAVEGACIÓN ===================== -->
+  <nav style="background:#0e1838;border-radius:20px;display:flex;flex-direction:column;align-items:center;padding:18px 0;gap:6px">
+    <div style="width:38px;height:38px;border-radius:50%;background:conic-gradient(#f26a1b 0 30%,#1f9d55 0 55%,#2b55e6 0 100%);display:grid;place-items:center;margin-bottom:18px"><div style="width:16px;height:16px;border-radius:50%;background:#0e1838"></div></div>
+    <sc-for list="{{ nav }}" as="n">
+      <button onClick="{{ n.go }}" title="{{ n.label }}" style="width:52px;padding:8px 0 6px;border:0;border-radius:12px;background:{{ n.bg }};color:{{ n.fg }};cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px" style-hover="background:rgba(255,255,255,.08)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="{{ n.icon }}"></path></svg>
+        <span style="font-size:9.5px;font-weight:600;letter-spacing:.01em">{{ n.label }}</span>
+      </button>
+    </sc-for>
+    <div style="flex:1"></div>
+    <div title="Soporte EYAQ" style="width:36px;height:36px;border-radius:50%;background:#1f3fbf;color:#fff;display:grid;place-items:center;font-size:12px;font-weight:700">OP</div>
+  </nav>
+
+  <!-- ===================== BANDEJA ===================== -->
+  <sc-if value="{{ isBandeja }}">
+  <div style="display:grid;grid-template-columns:280px minmax(0,1fr) 300px;grid-template-rows:minmax(0,1fr);gap:12px;min-height:0">
+
+  <aside style="background:#fff;border-radius:20px;display:flex;flex-direction:column;overflow:hidden">
+    <div style="padding:20px 18px 14px;display:flex;flex-direction:column;gap:12px;border-bottom:1px solid #eef0f4">
+      <div style="display:flex;align-items:baseline;justify-content:space-between">
+        <div style="font-size:20px;font-weight:700">Bandeja</div>
+        <div style="font-size:12px;color:#5b6478">{{ unreadTotal }} sin leer</div>
+      </div>
+      <input value="{{ query }}" onChange="{{ onQuery }}" placeholder="Buscar cliente o mensaje" style="height:38px;border:1px solid #e1e5ec;border-radius:10px;padding:0 12px;font-size:13.5px;background:#f7f8fa;outline:none;color:#131a2e">
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        <sc-for list="{{ filters }}" as="f">
+          <button onClick="{{ f.go }}" style="height:28px;padding:0 11px;border-radius:999px;border:1px solid {{ f.bd }};background:{{ f.bg }};color:{{ f.fg }};font-size:12.5px;font-weight:600;cursor:pointer">{{ f.label }}</button>
+        </sc-for>
+      </div>
+    </div>
+    <div style="flex:1;overflow-y:auto">
+      <sc-for list="{{ list }}" as="c">
+        <div onClick="{{ c.go }}" style="display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:10px;padding:13px 16px 13px 14px;border-left:3px solid {{ c.accent }};background:{{ c.bg }};cursor:pointer;border-bottom:1px solid #f1f3f6" style-hover="background:#f6f8fc">
+          <div style="position:relative;width:40px;height:40px;border-radius:50%;background:#eef1f6;display:grid;place-items:center;font-size:13px;font-weight:700;color:#2a3350">{{ c.initials }}
+            <div style="position:absolute;right:-2px;bottom:-2px;width:16px;height:16px;border-radius:50%;border:2px solid #fff;background:{{ c.chColor }};color:#fff;font-size:7.5px;font-weight:700;display:grid;place-items:center">{{ c.chShort }}</div>
+          </div>
+          <div style="min-width:0;display:flex;flex-direction:column;gap:3px">
+            <div style="font-size:14px;font-weight:{{ c.weight }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ c.name }}</div>
+            <div style="font-size:12.5px;color:#5b6478;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ c.preview }}</div>
+            <div style="display:flex;gap:5px;margin-top:2px">
+              <span style="white-space:nowrap;font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:6px;background:{{ c.tagBg }};color:{{ c.tagFg }}">{{ c.tag }}</span>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+            <div style="font-size:11.5px;color:#7a8296;white-space:nowrap">{{ c.time }}</div>
+            <sc-if value="{{ c.hasUnread }}"><div style="min-width:19px;height:19px;padding:0 5px;border-radius:999px;background:#1f3fbf;color:#fff;font-size:11px;font-weight:700;display:grid;place-items:center">{{ c.unread }}</div></sc-if>
+          </div>
+        </div>
+      </sc-for>
+      <sc-if value="{{ empty }}"><div style="padding:30px 18px;font-size:13px;color:#7a8296;text-align:center">Sin conversaciones para este filtro.</div></sc-if>
+    </div>
+  </aside>
+
+  <main style="background:#fff;border-radius:20px;display:flex;flex-direction:column;overflow:hidden;min-width:0">
+    <header style="padding:14px 18px;display:flex;align-items:center;gap:8px;border-bottom:1px solid #eef0f4">
+      <div style="flex-shrink:0;width:38px;height:38px;border-radius:50%;background:#eef1f6;display:grid;place-items:center;font-size:14px;font-weight:700;color:#2a3350">{{ cur.initials }}</div>
+      <div style="flex:1;min-width:120px">
+        <div style="font-size:16px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ cur.name }}</div>
+        <div style="font-size:12.5px;color:#5b6478;display:flex;gap:8px;align-items:center;white-space:nowrap;overflow:hidden"><span>{{ cur.channel }}</span><span style="width:3px;height:3px;border-radius:50%;background:#aab1c0"></span><span>Activo {{ cur.time }}</span></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;border-radius:999px;white-space:nowrap;flex-shrink:0;background:{{ mode.bg }};color:{{ mode.fg }};font-size:12.5px;font-weight:600">
+        <span style="width:7px;height:7px;border-radius:50%;background:{{ mode.dot }}"></span>{{ mode.label }}
+      </div>
+      <sc-if value="{{ canToggle }}">
+        <button onClick="{{ togglePause }}" style="height:34px;padding:0 14px;border-radius:10px;white-space:nowrap;flex-shrink:0;border:1px solid #dfe3ea;background:#fff;font-size:13px;font-weight:600;color:#2a3350;cursor:pointer" style-hover="background:#f5f7fa">{{ pauseLabel }}</button>
+      </sc-if>
+      <button onClick="{{ transfer }}" style="height:34px;padding:0 14px;border-radius:10px;white-space:nowrap;flex-shrink:0;border:0;background:{{ transferBg }};color:{{ transferFg }};font-size:13px;font-weight:700;cursor:pointer">{{ transferLabel }}</button>
+    </header>
+
+    <div style="flex:1;overflow-y:auto;background:#f7f8fb;padding:22px 26px;display:flex;flex-direction:column;gap:12px">
+      <sc-for list="{{ msgs }}" as="m">
+        <sc-if value="{{ m.isSystem }}">
+          <div style="align-self:center;display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:{{ m.sysBg }};color:{{ m.sysFg }};font-size:12px;font-weight:600;margin:4px 0">
+            <span style="width:6px;height:6px;border-radius:50%;background:{{ m.sysFg }}"></span>{{ m.text }} · {{ m.time }}
+          </div>
+        </sc-if>
+        <sc-if value="{{ m.isClient }}">
+          <div style="align-self:flex-start;width:fit-content;max-width:62%;display:flex;flex-direction:column;gap:4px">
+            <div style="background:#fff;border:1px solid #e4e8ee;border-radius:4px 16px 16px 16px;padding:10px 14px;font-size:14px;line-height:1.45;text-wrap:pretty">{{ m.text }}</div>
+            <div style="font-size:11px;color:#8a92a5;padding-left:4px;white-space:nowrap">{{ m.time }}</div>
+          </div>
+        </sc-if>
+        <sc-if value="{{ m.isOut }}">
+          <div style="align-self:flex-end;width:fit-content;max-width:62%;display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+            <div style="background:{{ m.bg }};color:{{ m.fg }};border-radius:16px 4px 16px 16px;padding:10px 14px;font-size:14px;line-height:1.45;text-wrap:pretty">{{ m.text }}</div>
+            <div style="font-size:11px;color:#8a92a5;padding-right:4px;white-space:nowrap">{{ m.who }} · {{ m.time }}</div>
+          </div>
+        </sc-if>
+      </sc-for>
+    </div>
+
+    <div style="padding:14px 22px;border-top:1px solid #eef0f4;display:flex;flex-direction:column;gap:8px">
+      <sc-if value="{{ samantaActive }}">
+        <div style="font-size:12px;color:#5b6478">Samanta está respondiendo. Si escribes, la conversación pasa a tu cargo.</div>
+      </sc-if>
+      <div style="display:flex;gap:10px;align-items:center">
+        <input value="{{ draft }}" onChange="{{ onDraft }}" onKeyDown="{{ onKey }}" placeholder="Escribe un mensaje" style="flex:1;height:44px;border:1px solid #e1e5ec;border-radius:12px;padding:0 14px;font-size:14px;outline:none;color:#131a2e">
+        <button onClick="{{ send }}" style="height:44px;padding:0 20px;border-radius:12px;border:0;background:#1f3fbf;color:#fff;font-size:14px;font-weight:700;cursor:pointer" style-hover="background:#18339e">Enviar</button>
+      </div>
+    </div>
+  </main>
+
+  <aside style="background:#fff;border-radius:20px;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:22px">
+    <section style="display:flex;flex-direction:column;gap:10px">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.08em;color:#7a8296">SOLICITUD DE RESERVA</div>
+      <sc-if value="{{ hasReq }}">
+        <div style="border:1px solid #e4e8ee;border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div style="font-size:15px;font-weight:700">{{ req.id }}</div>
+            <span style="font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:999px;background:{{ reqSt.bg }};color:{{ reqSt.fg }}">{{ reqSt.label }}</span>
+          </div>
+          <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:13px">
+            <span style="color:#7a8296">Fecha</span><span style="font-weight:600">{{ req.date }}</span>
+            <span style="color:#7a8296">Personas</span><span style="font-weight:600">{{ req.pax }}</span>
+            <span style="color:#7a8296">Servicio</span><span style="font-weight:600">{{ req.service }}</span>
+            <span style="color:#7a8296">Notas</span><span>{{ req.notes }}</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:0;border-top:1px solid #f0f2f5;padding-top:12px">
+            <sc-for list="{{ steps }}" as="s">
+              <div style="display:grid;grid-template-columns:18px 1fr;gap:10px">
+                <div style="display:flex;flex-direction:column;align-items:center">
+                  <div style="width:12px;height:12px;border-radius:50%;margin-top:3px;background:{{ s.dot }};border:2px solid {{ s.ring }}"></div>
+                  <sc-if value="{{ s.line }}"><div style="width:2px;flex:1;min-height:16px;background:#e4e8ee"></div></sc-if>
+                </div>
+                <div style="padding-bottom:10px">
+                  <div style="font-size:13px;font-weight:600;color:{{ s.fg }}">{{ s.label }}</div>
+                  <div style="font-size:11.5px;color:#7a8296">{{ s.sub }}</div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+      <sc-if value="{{ noReq }}">
+        <div style="border:1px dashed #d6dbe4;border-radius:14px;padding:16px;font-size:13px;color:#5b6478;line-height:1.5">Aún no hay solicitud. Samanta la crea cuando el cliente confirma fecha, hora y personas.</div>
+      </sc-if>
+    </section>
+
+    <section style="display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.08em;color:#7a8296">CLIENTE</div>
+        <span style="font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:999px;background:#e8f6ee;color:#14753f">{{ cur.status }}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 14px;font-size:13px">
+        <span style="color:#7a8296">Teléfono</span><span>{{ cur.phone }}</span>
+        <span style="color:#7a8296">Correo</span><span style="overflow:hidden;text-overflow:ellipsis">{{ cur.email }}</span>
+        <span style="color:#7a8296">Origen</span><span>{{ cur.channel }}</span>
+        <span style="color:#7a8296">Primer contacto</span><span>{{ cur.first }}</span>
+      </div>
+    </section>
+
+    <section style="display:flex;flex-direction:column;gap:10px">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.08em;color:#7a8296">HISTORIAL</div>
+      <sc-for list="{{ history }}" as="h">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-radius:10px;background:#f7f8fb">
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <span style="font-size:13px;font-weight:600">{{ h.id }}</span>
+            <span style="font-size:11.5px;color:#7a8296">{{ h.date }}</span>
+          </div>
+          <span style="font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:999px;background:{{ h.bg }};color:{{ h.fg }}">{{ h.label }}</span>
+        </div>
+      </sc-for>
+      <sc-if value="{{ noHistory }}"><div style="font-size:13px;color:#7a8296">Primera interacción.</div></sc-if>
+    </section>
+  </aside>
+  </div>
+  </sc-if>
+
+  <!-- ===================== SOLICITUDES ===================== -->
+  <sc-if value="{{ isSolicitudes }}">
+  <section style="background:#fff;border-radius:20px;overflow-y:auto;padding:28px 32px;display:flex;flex-direction:column;gap:22px;min-width:0">
+    <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:24px;font-weight:700;letter-spacing:-.01em">Solicitudes</div>
+        <div style="font-size:13.5px;color:#5b6478;margin-top:4px;text-wrap:pretty">Samanta envía cada solicitud al WhatsApp del dueño. Solo las aceptadas pasan al calendario.</div>
+      </div>
+      <div style="display:flex;gap:4px;padding:4px;border-radius:12px;background:#f0f2f6">
+        <sc-for list="{{ solTabs }}" as="t"><button onClick="{{ t.go }}" style="height:32px;padding:0 14px;border:0;border-radius:9px;background:{{ t.bg }};color:{{ t.fg }};font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;box-shadow:{{ t.sh }}">{{ t.label }}</button></sc-for>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px">
+      <sc-for list="{{ solKpis }}" as="k"><div style="border:1px solid #e8ebf0;border-radius:16px;display:flex;flex-direction:column;min-width:0;gap:6px;padding:16px 18px"><div style="font-size:12.5px;color:#5b6478">{{ k.label }}</div><div style="font-size:26px;font-weight:700;color:{{ k.fg }}">{{ k.value }}</div></div></sc-for>
+    </div>
+    <div style="border:1px solid #e8ebf0;border-radius:16px;overflow:hidden">
+      <div style="display:grid;grid-template-columns:92px minmax(150px,1.3fr) 150px 70px minmax(130px,1.1fr) 150px 140px;gap:12px;padding:12px 18px;background:#f7f8fb;font-size:11px;font-weight:700;letter-spacing:.06em;color:#7a8296"><span>ID</span><span>CLIENTE</span><span>FECHA</span><span>PERS.</span><span>SERVICIO</span><span>ESTADO</span><span>RESPUESTA</span></div>
+      <sc-for list="{{ sols }}" as="r">
+        <div style="display:grid;grid-template-columns:92px minmax(150px,1.3fr) 150px 70px minmax(130px,1.1fr) 150px 140px;gap:12px;padding:14px 18px;border-top:1px solid #f0f2f5;align-items:center;font-size:13.5px">
+          <span style="font-weight:700">{{ r.id }}</span>
+          <span style="display:flex;align-items:center;gap:8px;min-width:0"><span style="width:16px;height:16px;border-radius:50%;background:{{ r.chColor }};color:#fff;font-size:7.5px;font-weight:700;display:grid;place-items:center;flex-shrink:0">{{ r.chShort }}</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.client }}</span></span>
+          <span>{{ r.date }}</span><span>{{ r.pax }}</span><span style="color:#3b4560">{{ r.service }}</span>
+          <span style="font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap;justify-self:start;background:{{ r.bg }};color:{{ r.fg }}">{{ r.label }}</span>
+          <span style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span style="font-size:12.5px;color:#5b6478">{{ r.when }}</span>
+            <sc-if value="{{ r.hasConv }}"><button onClick="{{ r.open }}" style="height:28px;padding:0 10px;border-radius:8px;border:1px solid #dfe3ea;background:#fff;font-size:12px;font-weight:600;color:#1f3fbf;cursor:pointer;white-space:nowrap" style-hover="background:#f1f4fd">Chat</button></sc-if>
+          </span>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+  </sc-if>
+
+  <!-- ===================== CALENDARIO ===================== -->
+  <sc-if value="{{ isCalendario }}">
+  <div style="display:grid;grid-template-columns:minmax(0,1fr) 300px;grid-template-rows:minmax(0,1fr);gap:12px;min-height:0">
+  <section style="background:#fff;border-radius:20px;overflow-y:auto;padding:28px 32px;display:flex;flex-direction:column;gap:22px;min-width:0">
+    <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:24px;font-weight:700;letter-spacing:-.01em">Calendario</div>
+        <div style="font-size:13.5px;color:#5b6478;margin-top:4px;text-wrap:pretty">Solo reservas aceptadas por el dueño. {{ calRange }}</div>
+      </div>
+      <div style="display:flex;gap:4px;padding:4px;border-radius:12px;background:#f0f2f6"><sc-for list="{{ calTabs }}" as="t"><button onClick="{{ t.go }}" style="height:32px;padding:0 14px;border:0;border-radius:9px;background:{{ t.bg }};color:{{ t.fg }};font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;box-shadow:{{ t.sh }}">{{ t.label }}</button></sc-for></div>
+    </div>
+    <sc-if value="{{ calWeek }}">
+      <div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px;flex:1">
+        <sc-for list="{{ week }}" as="d">
+          <div style="display:flex;flex-direction:column;gap:8px;min-width:0">
+            <button onClick="{{ d.go }}" style="border:0;background:{{ d.hbg }};color:{{ d.hfg }};border-radius:12px;padding:8px 0;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:1px"><span style="font-size:11.5px;font-weight:600">{{ d.name }}</span><span style="font-size:18px;font-weight:700">{{ d.num }}</span></button>
+            <sc-for list="{{ d.items }}" as="e">
+              <div onClick="{{ e.go }}" style="border:1.5px solid {{ e.bd }};background:{{ e.bg }};border-radius:10px;padding:8px 9px;cursor:pointer;display:flex;flex-direction:column;gap:2px;min-width:0" style-hover="border-color:#1f3fbf">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:4px"><span style="font-size:12.5px;font-weight:700">{{ e.time }}</span><sc-if value="{{ e.prep }}"><span style="width:8px;height:8px;border-radius:50%;background:#1f9d55"></span></sc-if></div>
+                <span style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ e.client }}</span>
+                <span style="font-size:11.5px;color:#5b6478;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ e.pax }} pers · {{ e.area }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </sc-for>
+      </div>
+    </sc-if>
+    <sc-if value="{{ calDayView }}">
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="font-size:15px;font-weight:700">{{ dayTitle }}</div>
+        <sc-for list="{{ dayItems }}" as="e">
+          <div onClick="{{ e.go }}" style="display:grid;grid-template-columns:70px minmax(0,1fr) 120px 160px minmax(0,1fr);gap:14px;align-items:center;padding:14px 16px;border-radius:12px;border:1.5px solid {{ e.bd }};background:{{ e.bg }};cursor:pointer;font-size:13.5px">
+            <span style="font-weight:700;font-size:15px">{{ e.time }}</span><span style="font-weight:600">{{ e.client }}</span><span>{{ e.pax }} personas</span><span style="color:#3b4560">{{ e.service }} · {{ e.area }}</span><span style="color:#5b6478">{{ e.notes }}</span>
+          </div>
+        </sc-for>
+        <sc-if value="{{ dayEmpty }}"><div style="padding:30px;text-align:center;color:#7a8296;font-size:13.5px;border:1px dashed #d6dbe4;border-radius:12px">Sin reservas aceptadas este día.</div></sc-if>
+      </div>
+    </sc-if>
+    <sc-if value="{{ calMonth }}">
+      <div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px">
+        <sc-for list="{{ dow }}" as="w"><div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#7a8296;text-align:center;padding:4px 0">{{ w }}</div></sc-for>
+        <sc-for list="{{ month }}" as="m">
+          <button onClick="{{ m.go }}" style="height:78px;border-radius:12px;border:1px solid {{ m.bd }};background:{{ m.bg }};padding:8px 10px;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-start;cursor:pointer;opacity:{{ m.op }}">
+            <span style="font-size:13.5px;font-weight:700;color:{{ m.fg }}">{{ m.num }}</span>
+            <sc-if value="{{ m.has }}"><span style="font-size:11.5px;font-weight:600;color:#1f3fbf;background:#e9eefc;padding:2px 7px;border-radius:6px">{{ m.count }} reservas</span></sc-if>
+          </button>
+        </sc-for>
+      </div>
+    </sc-if>
+  </section>
+  <aside style="background:#fff;border-radius:20px;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:16px">
+    <div style="font-size:11px;font-weight:700;letter-spacing:.08em;color:#7a8296">DETALLE DE RESERVA</div>
+    <sc-if value="{{ hasCalSel }}">
+      <div style="display:flex;flex-direction:column;gap:16px">
+        <div style="display:flex;flex-direction:column;gap:4px"><span style="font-size:12px;color:#7a8296">{{ cs.id }}</span><span style="font-size:18px;font-weight:700">{{ cs.client }}</span><span style="display:flex;gap:6px;align-items:center;font-size:12.5px;color:#5b6478"><span style="width:16px;height:16px;border-radius:50%;background:{{ cs.chColor }};color:#fff;font-size:7.5px;font-weight:700;display:grid;place-items:center;flex-shrink:0">{{ cs.chShort }}</span>{{ cs.channel }}</span></div>
+        <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 14px;font-size:13px">
+          <span style="color:#7a8296">Fecha</span><span style="font-weight:600">{{ cs.dateLabel }}</span>
+          <span style="color:#7a8296">Hora</span><span style="font-weight:600">{{ cs.time }}</span>
+          <span style="color:#7a8296">Personas</span><span style="font-weight:600">{{ cs.pax }}</span>
+          <span style="color:#7a8296">Servicio</span><span style="font-weight:600">{{ cs.service }}</span>
+          <span style="color:#7a8296">Zona</span><span style="font-weight:600">{{ cs.area }}</span>
+          <span style="color:#7a8296">Notas</span><span>{{ cs.notes }}</span>
+        </div>
+        <span style="font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap;justify-self:start;background:#e8f6ee;color:#14753f">Aceptada por el dueño</span>
+        <button onClick="{{ togglePrep }}" style="height:42px;border-radius:12px;border:0;background:{{ prepBg }};color:{{ prepFg }};font-size:13.5px;font-weight:700;cursor:pointer">{{ prepLabel }}</button>
+      </div>
+    </sc-if>
+    <sc-if value="{{ noCalSel }}"><div style="font-size:13px;color:#5b6478;line-height:1.5">Selecciona una reserva para revisar los detalles y marcarla como preparada.</div></sc-if>
+  </aside>
+  </div>
+  </sc-if>
+
+  <!-- ===================== ESTADÍSTICAS ===================== -->
+  <sc-if value="{{ isEstadisticas }}">
+  <section style="background:#fff;border-radius:20px;overflow-y:auto;padding:28px 32px;display:flex;flex-direction:column;gap:22px;min-width:0">
+    <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:24px;font-weight:700;letter-spacing:-.01em">Estadísticas</div>
+        <div style="font-size:13.5px;color:#5b6478;margin-top:4px;text-wrap:pretty">Rendimiento de reservas, canales y servicios.</div>
+      </div>
+      <div style="display:flex;gap:4px;padding:4px;border-radius:12px;background:#f0f2f6"><sc-for list="{{ statTabs }}" as="t"><button onClick="{{ t.go }}" style="height:32px;padding:0 14px;border:0;border-radius:9px;background:{{ t.bg }};color:{{ t.fg }};font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;box-shadow:{{ t.sh }}">{{ t.label }}</button></sc-for></div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px">
+      <sc-for list="{{ kpis }}" as="k"><div style="border:1px solid #e8ebf0;border-radius:16px;display:flex;flex-direction:column;min-width:0;gap:6px;padding:18px"><div style="font-size:12.5px;color:#5b6478">{{ k.label }}</div><div style="font-size:30px;font-weight:700;letter-spacing:-.02em">{{ k.value }}</div><div style="font-size:12px;color:#7a8296">{{ k.sub }}</div></div></sc-for>
+    </div>
+    <div style="display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:12px">
+      <div style="border:1px solid #e8ebf0;border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:14px;min-width:0">
+        <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:15px;font-weight:700">Canales</div><div style="display:flex;gap:12px;font-size:11.5px;color:#5b6478"><span style="display:flex;align-items:center;gap:5px"><span style="width:8px;height:8px;border-radius:2px;background:#c9d4f7"></span>Conversaciones</span><span style="display:flex;align-items:center;gap:5px"><span style="width:8px;height:8px;border-radius:2px;background:#1f3fbf"></span>Reservas aceptadas</span></div></div>
+        <sc-for list="{{ chStats }}" as="c">
+          <div style="display:grid;grid-template-columns:90px minmax(0,1fr) 70px;gap:12px;align-items:center">
+            <span style="font-size:13px;font-weight:600">{{ c.name }}</span>
+            <div style="display:flex;flex-direction:column;gap:4px"><div style="height:10px;border-radius:4px;background:#c9d4f7;width:{{ c.w1 }}"></div><div style="height:10px;border-radius:4px;background:#1f3fbf;width:{{ c.w2 }}"></div></div>
+            <span style="font-size:12px;color:#5b6478;text-align:right">{{ c.conv }} / {{ c.res }}</span>
+          </div>
+        </sc-for>
+      </div>
+      <div style="border:1px solid #e8ebf0;border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:14px;min-width:0">
+        <div style="font-size:15px;font-weight:700">Servicios más solicitados</div>
+        <sc-for list="{{ svcStats }}" as="v">
+          <div style="display:flex;flex-direction:column;gap:5px"><div style="display:flex;justify-content:space-between;font-size:13px"><span style="font-weight:600">{{ v.name }}</span><span style="color:#5b6478">{{ v.n }}</span></div><div style="height:6px;border-radius:3px;background:#f0f2f6"><div style="height:6px;border-radius:3px;background:#f26a1b;width:{{ v.w }}"></div></div></div>
+        </sc-for>
+      </div>
+    </div>
+    <div style="border:1px solid #e8ebf0;border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:14px;min-width:0">
+      <div style="font-size:15px;font-weight:700">{{ barTitle }}</div>
+      <div style="display:flex;align-items:flex-end;gap:10px;height:160px">
+        <sc-for list="{{ bars }}" as="b">
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end">
+            <span style="font-size:11.5px;font-weight:600;color:#3b4560">{{ b.v }}</span>
+            <div style="width:100%;max-width:48px;border-radius:6px 6px 2px 2px;background:#1f3fbf;height:{{ b.h }}"></div>
+            <span style="font-size:11.5px;color:#7a8296">{{ b.l }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </section>
+  </sc-if>
+
+  <!-- ===================== CLIENTES ===================== -->
+  <sc-if value="{{ isClientes }}">
+  <section style="background:#fff;border-radius:20px;overflow-y:auto;padding:28px 32px;display:flex;flex-direction:column;gap:22px;min-width:0">
+    <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:24px;font-weight:700;letter-spacing:-.01em">Clientes</div>
+        <div style="font-size:13.5px;color:#5b6478;margin-top:4px;text-wrap:pretty">Cada persona que escribe queda registrada con su canal, historial y estado comercial.</div>
+      </div>
+      <input value="{{ cliQ }}" onChange="{{ onCliQ }}" placeholder="Buscar cliente" style="height:40px;border:1px solid #e1e5ec;border-radius:10px;padding:0 12px;font-size:13.5px;color:#131a2e;outline:none;width:260px;background:#f7f8fa">
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px">
+      <sc-for list="{{ cliChips }}" as="f"><button onClick="{{ f.go }}" style="height:30px;padding:0 12px;border-radius:999px;border:1px solid {{ f.bd }};background:{{ f.bg }};color:{{ f.fg }};font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">{{ f.label }}</button></sc-for>
+    </div>
+    <div style="border:1px solid #e8ebf0;border-radius:16px;overflow:hidden">
+      <div style="display:grid;grid-template-columns:minmax(180px,1.3fr) 110px 140px 120px 80px minmax(140px,1fr);gap:12px;padding:12px 18px;background:#f7f8fb;font-size:11px;font-weight:700;letter-spacing:.06em;color:#7a8296"><span>CLIENTE</span><span>CANAL</span><span>ESTADO</span><span>ÚLTIMO CONTACTO</span><span>RESERVAS</span><span>CONSULTÓ</span></div>
+      <sc-for list="{{ clis }}" as="c">
+        <div onClick="{{ c.open }}" style="display:grid;grid-template-columns:minmax(180px,1.3fr) 110px 140px 120px 80px minmax(140px,1fr);gap:12px;padding:12px 18px;border-top:1px solid #f0f2f5;align-items:center;font-size:13.5px;cursor:{{ c.cur }}" style-hover="background:#f9fafc">
+          <span style="display:flex;align-items:center;gap:10px;min-width:0"><span style="width:32px;height:32px;border-radius:50%;background:#eef1f6;display:grid;place-items:center;font-size:11.5px;font-weight:700;color:#2a3350;flex-shrink:0">{{ c.initials }}</span><span style="display:flex;flex-direction:column;min-width:0"><span style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ c.name }}</span><span style="font-size:12px;color:#7a8296">{{ c.phone }}</span></span></span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:16px;height:16px;border-radius:50%;background:{{ c.chColor }};color:#fff;font-size:7.5px;font-weight:700;display:grid;place-items:center;flex-shrink:0">{{ c.chShort }}</span>{{ c.channel }}</span>
+          <span style="font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap;justify-self:start;background:{{ c.bg }};color:{{ c.fg }}">{{ c.estado }}</span>
+          <span style="color:#5b6478">{{ c.last }}</span><span style="font-weight:600">{{ c.res }}</span><span style="color:#3b4560">{{ c.topic }}</span>
+        </div>
+      </sc-for>
+      <sc-if value="{{ cliEmpty }}"><div style="padding:28px;text-align:center;font-size:13px;color:#7a8296;border-top:1px solid #f0f2f5">Sin clientes para este filtro.</div></sc-if>
+    </div>
+  </section>
+  </sc-if>
+
+  <!-- ===================== AJUSTES ===================== -->
+  <sc-if value="{{ isAjustes }}">
+  <section style="background:#fff;border-radius:20px;overflow-y:auto;padding:28px 32px;min-width:0;display:grid;grid-template-columns:200px minmax(0,1fr);align-content:start;gap:28px">
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <div style="font-size:24px;font-weight:700;margin-bottom:12px">Ajustes</div>
+      <sc-for list="{{ cfgTabs }}" as="t"><button onClick="{{ t.go }}" style="text-align:left;height:38px;padding:0 12px;border:0;border-radius:10px;background:{{ t.bg }};color:{{ t.fg }};font-size:13.5px;font-weight:600;cursor:pointer">{{ t.label }}</button></sc-for>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:20px;max-width:760px;padding-top:50px">
+      <sc-if value="{{ cfgEmpresa }}">
+        <div style="font-size:17px;font-weight:700">Datos de la empresa</div>
+        <div style="display:flex;align-items:center;gap:16px"><div style="width:72px;height:72px;border-radius:16px;border:1px dashed #c9d0dc;background:repeating-linear-gradient(45deg,#f6f7fa 0 6px,#eef0f4 6px 12px);display:grid;place-items:center;font-family:ui-monospace,monospace;font-size:10px;color:#7a8296">logo</div><button style="height:36px;padding:0 14px;border-radius:10px;border:1px solid #dfe3ea;background:#fff;font-size:13px;font-weight:600;cursor:pointer">Subir logotipo</button></div>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px">
+          <sc-for list="{{ empFields }}" as="f"><label style="display:flex;flex-direction:column;gap:6px;grid-column:{{ f.span }}"><span style="font-size:12.5px;font-weight:600;color:#3b4560">{{ f.label }}</span><input defaultValue="{{ f.value }}" style="height:40px;border:1px solid #e1e5ec;border-radius:10px;padding:0 12px;font-size:13.5px;background:#fff;color:#131a2e;outline:none;width:100%"></label></sc-for>
+        </div>
+      </sc-if>
+      <sc-if value="{{ cfgHorarios }}">
+        <div style="font-size:17px;font-weight:700">Horarios de atención</div>
+        <div style="border:1px solid #e8ebf0;border-radius:14px;overflow:hidden">
+          <sc-for list="{{ hours }}" as="d">
+            <div style="display:grid;grid-template-columns:120px 50px 1fr;gap:14px;align-items:center;padding:12px 16px;border-bottom:1px solid #f0f2f5">
+              <span style="font-size:13.5px;font-weight:600">{{ d.day }}</span>
+              <button onClick="{{ d.t.go }}" style="width:38px;height:22px;border-radius:999px;border:0;padding:2px;background:{{ d.t.bg }};display:flex;justify-content:{{ d.t.jc }};cursor:pointer;flex-shrink:0"><span style="width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2)"></span></button>
+              <sc-if value="{{ d.t.on }}"><span style="display:flex;gap:8px;align-items:center;font-size:13px;color:#5b6478"><input defaultValue="{{ d.open }}" style="border:1px solid #e1e5ec;border-radius:10px;padding:0 12px;font-size:13.5px;background:#fff;color:#131a2e;outline:none;width:90px;height:34px"> a <input defaultValue="{{ d.close }}" style="border:1px solid #e1e5ec;border-radius:10px;padding:0 12px;font-size:13.5px;background:#fff;color:#131a2e;outline:none;width:90px;height:34px"></span></sc-if>
+              <sc-if value="{{ d.t.off }}"><span style="font-size:13px;color:#7a8296">Cerrado</span></sc-if>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+      <sc-if value="{{ cfgServicios }}">
+        <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:17px;font-weight:700">Servicios y precios</div><button style="height:36px;padding:0 14px;border-radius:10px;border:0;background:#1f3fbf;color:#fff;font-size:13px;font-weight:700;cursor:pointer">Nuevo servicio</button></div>
+        <div style="font-size:13px;color:#5b6478">Samanta solo ofrece servicios activos.</div>
+        <div style="border:1px solid #e8ebf0;border-radius:14px;overflow:hidden">
+          <sc-for list="{{ svcs }}" as="v">
+            <div style="display:grid;grid-template-columns:minmax(0,1fr) 130px 100px 40px;gap:14px;align-items:center;padding:12px 16px;border-bottom:1px solid #f0f2f5;opacity:{{ v.op }}">
+              <span style="display:flex;flex-direction:column"><span style="font-size:13.5px;font-weight:600">{{ v.name }}</span><span style="font-size:12px;color:#7a8296">{{ v.desc }}</span></span>
+              <span style="font-size:12.5px;color:#5b6478">{{ v.cat }}</span><span style="font-size:13.5px;font-weight:600">{{ v.price }}</span>
+              <button onClick="{{ v.t.go }}" style="width:38px;height:22px;border-radius:999px;border:0;padding:2px;background:{{ v.t.bg }};display:flex;justify-content:{{ v.t.jc }};cursor:pointer;flex-shrink:0"><span style="width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2)"></span></button>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+      <sc-if value="{{ cfgPoliticas }}">
+        <div style="font-size:17px;font-weight:700">Políticas</div>
+        <sc-for list="{{ policies }}" as="p"><label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:12.5px;font-weight:600;color:#3b4560">{{ p.label }}</span><textarea defaultValue="{{ p.value }}" rows="4" style="border:1px solid #e1e5ec;border-radius:10px;padding:10px 12px;font-size:13.5px;font-family:inherit;line-height:1.5;color:#131a2e;resize:vertical;outline:none"></textarea></label></sc-for>
+      </sc-if>
+      <sc-if value="{{ cfgSamanta }}">
+        <div style="font-size:17px;font-weight:700">Samanta</div>
+        <div style="border:1px solid #e8ebf0;border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:14px;min-width:0">
+          <div style="font-size:14px;font-weight:700">Canales donde atiende</div>
+          <sc-for list="{{ samCh }}" as="c"><div style="display:flex;justify-content:space-between;align-items:center"><span style="display:flex;align-items:center;gap:8px;font-size:13.5px"><span style="width:16px;height:16px;border-radius:50%;background:{{ c.chColor }};color:#fff;font-size:7.5px;font-weight:700;display:grid;place-items:center;flex-shrink:0">{{ c.chShort }}</span>{{ c.name }}</span><button onClick="{{ c.t.go }}" style="width:38px;height:22px;border-radius:999px;border:0;padding:2px;background:{{ c.t.bg }};display:flex;justify-content:{{ c.t.jc }};cursor:pointer;flex-shrink:0"><span style="width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2)"></span></button></div></sc-for>
+        </div>
+        <div style="border:1px solid #e8ebf0;border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:14px;min-width:0">
+          <div style="font-size:14px;font-weight:700">Validación del dueño</div>
+          <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px">
+            <sc-for list="{{ ownerFields }}" as="f"><label style="display:flex;flex-direction:column;gap:6px"><span style="font-size:12.5px;font-weight:600;color:#3b4560">{{ f.label }}</span><input defaultValue="{{ f.value }}" style="height:40px;border:1px solid #e1e5ec;border-radius:10px;padding:0 12px;font-size:13.5px;background:#fff;color:#131a2e;outline:none;width:100%"></label></sc-for>
+          </div>
+        </div>
+        <div style="border:1px solid #e8ebf0;border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:14px;min-width:0">
+          <div style="font-size:14px;font-weight:700">Reglas</div>
+          <sc-for list="{{ rules }}" as="r"><div style="display:flex;justify-content:space-between;align-items:center;gap:16px"><span style="font-size:13.5px;text-wrap:pretty">{{ r.label }}</span><button onClick="{{ r.t.go }}" style="width:38px;height:22px;border-radius:999px;border:0;padding:2px;background:{{ r.t.bg }};display:flex;justify-content:{{ r.t.jc }};cursor:pointer;flex-shrink:0"><span style="width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2)"></span></button></div></sc-for>
+        </div>
+      </sc-if>
+      <sc-if value="{{ cfgUsuarios }}">
+        <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:17px;font-weight:700">Usuarios y roles</div><button style="height:36px;padding:0 14px;border-radius:10px;border:0;background:#1f3fbf;color:#fff;font-size:13px;font-weight:700;cursor:pointer">Invitar usuario</button></div>
+        <div style="border:1px solid #e8ebf0;border-radius:14px;overflow:hidden">
+          <sc-for list="{{ users }}" as="u">
+            <div style="display:grid;grid-template-columns:minmax(0,1fr) 170px 140px 40px;gap:14px;align-items:center;padding:12px 16px;border-bottom:1px solid #f0f2f5">
+              <span style="display:flex;flex-direction:column"><span style="font-size:13.5px;font-weight:600">{{ u.name }}</span><span style="font-size:12px;color:#7a8296">{{ u.email }}</span></span>
+              <span style="font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap;justify-self:start;background:#eef2ff;color:#2b45b8">{{ u.role }}</span><span style="font-size:12.5px;color:#5b6478">{{ u.last }}</span>
+              <button onClick="{{ u.t.go }}" style="width:38px;height:22px;border-radius:999px;border:0;padding:2px;background:{{ u.t.bg }};display:flex;justify-content:{{ u.t.jc }};cursor:pointer;flex-shrink:0"><span style="width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2)"></span></button>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+    </div>
+  </section>
+  </sc-if>
+</div>

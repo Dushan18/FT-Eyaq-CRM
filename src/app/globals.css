@@ -1,0 +1,88 @@
+@import "tailwindcss";
+
+/*
+ * Tokens del mockup aprobado (docs/diseno). Los valores son exactos; no los redondees.
+ * Se usan como utilidades de Tailwind: bg-canvas, text-ink, border-field, etc.
+ */
+@theme inline {
+  --font-sans: var(--font-jakarta), system-ui, sans-serif;
+  --font-mono: ui-monospace, monospace;
+
+  /* Lienzo y superficies */
+  --color-canvas: #e8ebf1;
+  --color-navy: #0e1838;
+  --color-surface: #f7f8fb;
+  --color-surface-2: #f7f8fa;
+  --color-segment: #f0f2f6;
+  --color-avatar: #eef1f6;
+  --color-hover-row: #f6f8fc;
+  --color-hover-soft: #f9fafc;
+
+  /* Texto */
+  --color-ink: #131a2e;
+  --color-ink-2: #2a3350;
+  --color-slate: #3b4560;
+  --color-muted: #5b6478;
+  --color-subtle: #7a8296;
+  --color-faint: #8a92a5;
+  --color-dot: #aab1c0;
+  --color-nav-text: #9aa6c8;
+
+  /* Bordes */
+  --color-line: #eef0f4;
+  --color-line-2: #f0f2f5;
+  --color-line-3: #f1f3f6;
+  --color-field: #e1e5ec;
+  --color-card: #e8ebf0;
+  --color-bubble: #e4e8ee;
+  --color-button: #dfe3ea;
+  --color-dashed-line: #d6dbe4;
+
+  /* Marca y acción */
+  --color-brand: #1f3fbf;
+  --color-brand-hover: #18339e;
+  --color-brand-soft: #f1f4fd;
+  --color-brand-tint: #eef2ff;
+  --color-brand-bubble: #e9eefc;
+  --color-brand-bar: #c9d4f7;
+  --color-orange: #f26a1b;
+  --color-toggle-off: #d6dbe4;
+
+  /* Canales */
+  --color-whatsapp: #1f9d55;
+  --color-facebook: #2b55e6;
+  --color-instagram: #c13584;
+  --color-web: #6b7385;
+}
+
+html,
+body {
+  margin: 0;
+  background: #e8ebf1;
+  color: #131a2e;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: #1f3fbf;
+}
+
+a:hover {
+  color: #152c8a;
+}
+
+input,
+button,
+textarea,
+select {
+  font-family: inherit;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+:focus-visible {
+  outline: 2px solid #1f3fbf;
+  outline-offset: 2px;
+}
