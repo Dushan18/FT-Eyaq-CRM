@@ -5,7 +5,7 @@
  */
 import { TZDate } from "@date-fns/tz";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { Conversation, Message, Paginated, Reservation, ReservationRequest } from "@/lib/api/types";
+import type { Conversation, Message, Paginated, Reservation, ReservationRequest, SamantaDraftListResponse } from "@/lib/api/types";
 import { buildSeed } from "./seed";
 import { handleMockRequest, mockStore } from "./server";
 import { runSimulator, SimulatorError, simulatorSnapshot } from "./simulator";
@@ -97,9 +97,14 @@ describe("flujo central de solicitudes", () => {
     const reservations = await api<Paginated<Reservation>>("GET", "/reservations", { token: admin, query: { customerId } });
     expect(reservations.body.pagination.total).toBe(0);
 
+    // Como en bk-crm, el mensaje de Samanta tiene autor (quien aprobó el borrador; aquí, el ADMIN porque la
+    // conversación está libre) y sale de un borrador APPROVED que apunta a él.
+    const adminId = (await api<{ id: string }>("GET", "/auth/me", { token: admin })).body.id;
     const last = (await messages(admin, conversationId))[0]!;
-    expect(last).toMatchObject({ direction: "OUTBOUND", authorUserId: null });
+    expect(last).toMatchObject({ direction: "OUTBOUND", authorUserId: adminId });
     expect(last.content).toContain("envié tu solicitud");
+    const drafts = await api<SamantaDraftListResponse>("GET", `/conversations/${conversationId}/assistant-drafts`, { token: admin });
+    expect(drafts.body.data[0]).toMatchObject({ status: "APPROVED", outboundMessageId: last.id, reviewedById: adminId, content: last.content });
   });
 
   it("4–5: si el dueño responde ACEPTAR, la reserva entra al calendario de ese día", async () => {
@@ -249,16 +254,26 @@ describe("reglas del contrato que la Bandeja respeta", () => {
     expect((await api("GET", "/conversations", { token: support })).status).toBe(403);
   });
 
-  it("solo WhatsApp envía y dentro de la ventana de 24 h", async () => {
+  it("WhatsApp y Messenger envían dentro de la ventana de 24 h; los demás canales no tienen destinatario", async () => {
     const facebook = (runSimulator({ accion: "entrante", texto: "Hola", canal: "FACEBOOK", nombre: "Face Book" }) as { conversationId: string })
       .conversationId;
-    const viaFacebook = await api<{ message: string }>("POST", `/conversations/${facebook}/messages`, {
+    const viaFacebook = await api<Message>("POST", `/conversations/${facebook}/messages`, {
       token: admin,
       headers: { "idempotency-key": "facebook-0001-abcdefgh" },
       body: { type: "TEXT", content: "Hola" },
     });
-    expect(viaFacebook.status).toBe(400);
-    expect(viaFacebook.body.message).toContain("destinatario WhatsApp");
+    expect(viaFacebook.status).toBe(202);
+    expect(viaFacebook.body).toMatchObject({ channel: "FACEBOOK", direction: "OUTBOUND", status: "QUEUED" });
+
+    const instagram = (runSimulator({ accion: "entrante", texto: "Hola", canal: "INSTAGRAM", nombre: "Insta Gram" }) as { conversationId: string })
+      .conversationId;
+    const viaInstagram = await api<{ message: string }>("POST", `/conversations/${instagram}/messages`, {
+      token: admin,
+      headers: { "idempotency-key": "instagram-0001-abcdefg" },
+      body: { type: "TEXT", content: "Hola" },
+    });
+    expect(viaInstagram.status).toBe(400);
+    expect(viaInstagram.body.message).toBe("Conversación sin destinatario habilitado");
 
     // El último mensaje del cliente fue hace 25 h: WhatsApp ya no permite responder sin plantilla.
     const whatsapp = newConversation("Ventana Cerrada");

@@ -46,7 +46,7 @@ Los datos simulados viven en memoria: al reiniciar el servidor vuelven a los dat
 | Acción | Qué simula |
 | --- | --- |
 | `entrante` | Un mensaje de un cliente (nuevo o en una conversación existente) llega a la Bandeja |
-| `samanta` | Una respuesta automática de Samanta (no escribe si la conversación está en pausa) |
+| `samanta` | Una respuesta de Samanta ya aprobada (crea el borrador aprobado y el mensaje con autor; no escribe si la conversación está en pausa). En la Bandeja también puedes pedir un borrador con «Generar borrador» |
 | `solicitud` | Samanta confirma fecha, hora, personas y servicio, y crea la solicitud **esperando al dueño**. Solo acepta servicios activos y aprobados. Con **más de 20 personas** no crea la solicitud y pasa la conversación a una persona |
 | `dueno` | El dueño responde `ACEPTAR` (la reserva entra al calendario) o `RECHAZAR` (Samanta propone otra fecha u hora) |
 | `reiniciar` | Restaura los datos de ejemplo y cierra todas las sesiones |
@@ -101,8 +101,19 @@ Fuera del modo simulado el simulador responde 404.
 5. En bk-crm, `FRONTEND_RESET_PASSWORD_URL` debe apuntar a `<origen del frontend>/reset-password`
    (su valor por defecto, `http://localhost:5173/reset-password`, ya coincide con este proyecto).
 
-Con el backend real, hoy **no** se generan los estados del dueño (Esperando, Aceptada, Rechazada) ni los
-mensajes de Samanta, porque bk-crm aún no tiene ese flujo ni la IA (ver sección 8).
+Primer arranque con el backend real:
+
+- Entra con el `ADMIN_EMAIL` / `ADMIN_PASSWORD` del `.env` de bk-crm (los usuarios de ejemplo solo existen en el
+  modo simulado). Crea los demás usuarios en **Ajustes › Usuarios**.
+- **Ajustes › Empresa** muestra el alta inicial: sin la configuración del restaurante no se pueden crear
+  solicitudes ni reservas, ni usar Samanta.
+- El catálogo del seed llega en borrador: aprueba en **Ajustes › Servicios** los servicios que se puedan ofrecer
+  (Samanta, solicitudes y reservas solo usan servicios activos y aprobados).
+- Las solicitudes y reservas se registran desde el CRM («Nueva solicitud», «Nueva reserva»). bk-crm aún no tiene el
+  flujo del dueño, así que los estados Esperando, Aceptada y Rechazada no aparecen (ver sección 8).
+
+El contrato completo de bk-crm para el frontend está en `docs/frontend-api-completo.md` (copia del documento de
+bk-crm; si cambia allí, vuelve a copiarlo).
 
 ## 5. Variables de entorno
 
@@ -114,12 +125,14 @@ Las del frontend están en `.env.example`. Las `CRM_*` son solo del servidor y n
 | `CRM_BACKEND_URL` | `http://localhost:3000` | URL de bk-crm, sin barra final (solo la usa el servidor) |
 | `CRM_BACKEND_TIMEOUT_MS` | `15000` | Techo de tiempo por llamada al backend |
 | `CRM_COOKIE_SECURE` | automático | `true` en producción; exige HTTPS |
+| `CRM_TRUST_PROXY` | vacío (0) | Proxies inversos delante de Next.js. Con `1` (un Nginx) se limitan por IP los intentos de sesión y se reenvía la IP del navegador a bk-crm |
 | `CRM_MOCK_PASSWORD` | `demo1234` | Contraseña de los usuarios simulados |
 | `CRM_ENABLE_SIMULATOR` | `true` | Simulador de canales (solo en modo mock) |
 | `CRM_MOCK_LATENCY_MS` | `120` | Latencia artificial de las respuestas simuladas |
 | `CRM_ALLOW_MOCK_IN_PRODUCTION` | `false` | El modo mock no arranca en producción salvo que esto sea `true` |
 | `NEXT_PUBLIC_INBOX_POLL_MS` | `6000` | Cada cuánto se actualiza la lista de la Bandeja |
 | `NEXT_PUBLIC_CHAT_POLL_MS` | `4000` | Cada cuánto se actualiza el chat abierto |
+| `CRM_DEV_ORIGINS` | vacío | Solo `npm run dev`: hosts extra (p. ej., la IP de red) que pueden abrir el servidor con recarga en caliente |
 
 **Claves, número del dueño y tokens de Meta** van en el servidor de **bk-crm**, nunca en el frontend ni en
 el repositorio: `JWT_SECRET`, `JWT_REFRESH_SECRET`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_VERIFY_TOKEN`,
@@ -157,7 +170,14 @@ npm run build       # build de producción
    ```ini
    CRM_BACKEND_MODE=live
    CRM_BACKEND_URL=http://<host-interno-de-bk-crm>:3000
+   CRM_TRUST_PROXY=1
    ```
+
+   `CRM_TRUST_PROXY=1` indica que hay un proxy inverso delante (paso 4). Así el BFF limita los intentos de
+   inicio de sesión y recuperación por IP del navegador (20 logins y 10 recuperaciones cada 15 min) y le pasa
+   esa IP a bk-crm. En el `.env` de bk-crm define `TRUST_PROXY=1` para que sus límites por cuenta también
+   cuenten con la IP del navegador y no con la de este servidor. Sin estas variables, el único límite es el de
+   bk-crm por cuenta.
 
 3. Compila y arranca (puerto 5173):
 
@@ -167,7 +187,11 @@ npm run build       # build de producción
    ```
 
 4. Publica detrás de un proxy inverso con **HTTPS** (Nginx, Caddy…). Las cookies de sesión son `Secure` en
-   producción: sin HTTPS no se puede iniciar sesión.
+   producción: sin HTTPS no se puede iniciar sesión. El proxy debe esperar al menos **70 s** por respuesta:
+   generar un borrador de Samanta puede tardar hasta 65 s (en Nginx, `proxy_read_timeout 70s;`; su valor por
+   defecto, 60 s, cortaría antes). También debe agregar la IP del navegador
+   (`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` en Nginx; Caddy lo hace solo), y Next.js
+   no debe ser accesible sin pasar por él: si no, el navegador podría falsear su IP.
 5. Comprueba:
    - `GET /api/salud` → `{"estado":"ok","modo":"live"}` (el proceso vive).
    - `GET /api/listo` → 200 si bk-crm y su base de datos responden; 503 si no.
@@ -188,17 +212,26 @@ El backend actual no tiene algunas piezas que el mockup muestra. La interfaz no 
 o «Pendiente en el backend». Lo pendiente:
 
 - **Tiempo real:** no hay WebSockets; la Bandeja se actualiza por sondeo (6 s la lista, 4 s el chat).
-- **Samanta (IA)** y el **flujo del dueño** por WhatsApp (enviar, ACEPTAR, RECHAZAR) no existen en bk-crm;
-  solo el simulador los reproduce. Los mensajes de Samanta se representan como salientes sin autor.
+- **Samanta v1 prepara borradores con revisión humana** (solo WhatsApp): una persona pide el borrador para el
+  último mensaje del cliente, lo edita si hace falta y lo aprueba (sale como mensaje de quien aprueba) o lo
+  descarta. Un mensaje se marca como de Samanta si salió de un borrador aprobado (`outboundMessageId`); la
+  lista solo trae los 50 borradores más recientes. Con `SAMANTA_ENABLED=false` en bk-crm, el panel lo avisa.
+- El **flujo del dueño** por WhatsApp (enviar, ACEPTAR, RECHAZAR) no existe en bk-crm; solo el simulador lo
+  reproduce. Las pestañas Esperando, Aceptadas y Rechazadas lo indican.
 - **Escribir toma el control:** el backend no lo hace solo; el frontend pausa a Samanta, envía y se asigna
   la conversación (en ese orden). Un operador no puede escribir en una conversación que atiende otra persona;
-  un administrador sí, sin cambiar el responsable.
+  un administrador sí, sin cambiar el responsable. *Pendiente de decidir con producto:* con la conversación en
+  pausa no se pueden pedir borradores.
 - **Eventos del chat** («Solicitud enviada al dueño», «Operador tomó la conversación»): no existen; el avance
   se ve en la línea de tiempo del panel derecho.
-- **Solo WhatsApp envía.** Facebook, Instagram y Web se ven en la Bandeja, pero responder por ellos queda
-  deshabilitado con una explicación.
-- **«Marcar como preparada»** usa el estado `UPCOMING` del backend, que no se puede deshacer; por eso pide
+- **Envían WhatsApp y Messenger** (canal Facebook): tope de 4096 y 2000 caracteres y ventana de 24 h en los dos.
+  Instagram y Web se ven en la Bandeja, pero responder por ellos queda deshabilitado con una explicación.
+  Messenger no informa lecturas (como mucho «Entregado») y sus clientes no tienen teléfono: se muestran por el
+  nombre que da Meta o como «Cliente de Messenger».
+- **«Marcar como preparada»** usa el estado `UPCOMING` del backend. No hay vuelta directa a «Confirmada», pero
+  al reprogramar la reserva pasa a «Reprogramada» y desde ahí puede confirmarse otra vez; por eso pide
   confirmación. *Pendiente de confirmar con el dueño del producto.*
+- **Solo un administrador crea reservas** («Nueva reserva»); un operador las edita, reprograma, toma o libera.
 - **Zona o área** de la reserva no existe en el backend: se muestra el servicio.
 - **Tiempo de respuesta del dueño** y «Resueltas por Samanta» no se registran: se muestran «—».
 - **Estadísticas** se calculan en el navegador con los listados (no hay endpoint de estadísticas).
@@ -231,5 +264,3 @@ e2e/                     pruebas de punta a punta (Playwright)
 docs/diseno/             mockup aprobado decodificado
 docs/backend/            contratos y brechas de bk-crm
 ```
-#   F T - E y a q - C R M  
- 

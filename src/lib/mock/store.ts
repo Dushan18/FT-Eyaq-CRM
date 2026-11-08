@@ -14,6 +14,7 @@ import type {
   ReservationRescheduleEntry,
   Reservation,
   RestaurantConfig,
+  SamantaDraft,
   User,
 } from "@/lib/api/types";
 
@@ -31,7 +32,14 @@ export interface MockSession {
   expiresAt: number;
 }
 
-export type MockCustomer = Customer & { interests: Array<Omit<CustomerInterest, "commercialItem"> & { commercialItemId: string }> };
+export type MockCustomer = Customer & {
+  interests: Array<Omit<CustomerInterest, "commercialItem"> & { commercialItemId: string }>;
+  /**
+   * PSID de Messenger (dato interno, nunca se expone). Solo lo tienen los clientes que creó el webhook de
+   * Messenger: son la «identidad de Messenger» (canal fijo en FACEBOOK, contacto opcional, destinatario de envío).
+   */
+  messengerPsid?: string | null;
+};
 
 export type MockConversation = Omit<Conversation, "customer" | "assignedUser" | "unreadCount">;
 
@@ -53,7 +61,9 @@ export interface MockStore {
   reservations: MockReservation[];
   conversations: MockConversation[];
   messages: Message[];
-  /** clave de idempotencia por conversación → id de mensaje */
+  /** Borradores de Samanta (todas las conversaciones). Los mensajes de Samanta salen de uno APPROVED. */
+  drafts: SamantaDraft[];
+  /** "<conversationId>:<Idempotency-Key>" → mensaje saliente (también "samanta-<draftId>" al aprobar). */
   idempotency: Map<string, { messageId: string; authorUserId: string; content: string }>;
   sequences: { request: number; reservation: number };
 }
@@ -70,6 +80,11 @@ export function uuid(): string {
 
 export function iso(ms: number): string {
   return new Date(ms).toISOString();
+}
+
+/** `sequence` del último mensaje de la conversación (0 si no tiene). */
+export function lastSequence(store: Pick<MockStore, "messages">, conversationId: string): number {
+  return store.messages.filter((m) => m.conversationId === conversationId).reduce((max, m) => Math.max(max, m.sequence), 0);
 }
 
 const globalKey = "__crmMockStore" as const;

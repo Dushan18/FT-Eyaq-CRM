@@ -1,5 +1,6 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
@@ -13,6 +14,7 @@ import { InlineNotice } from "@/components/ui/state";
 export function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
+  const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -29,6 +31,9 @@ export function LoginForm() {
     setPending(true);
     try {
       const { user } = await sessionApi.login(email.trim(), password);
+      // El QueryClient del navegador sobrevive al cambio de cuenta sin recargar: se vacía para no mostrar
+      // datos del usuario anterior (qk.me incluido).
+      queryClient.clear();
       const target = safeNextPath(params.get("next")) ?? homePathFor(user.roles) ?? "/bandeja";
       router.replace(target);
     } catch (e) {

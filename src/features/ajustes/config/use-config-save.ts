@@ -18,14 +18,21 @@ export type ConfigSaveVariables = (
   onSaved?: (config: RestaurantConfig) => void;
 };
 
+/** Todas las pestañas comparten este scope: TanStack ejecuta sus guardados de a uno, en orden. */
+export const CONFIG_SAVE_SCOPE = { id: "restaurant-config" } as const;
+
 /**
  * Guardado de la configuración (solo ADMIN). El PUT reemplaza todo: antes de guardar se relee la
  * configuración para no pisar lo que otra persona cambió en otras pestañas, y la respuesta reemplaza
  * la caché `qk.config` (zona horaria y moneda de toda la app incluidas).
+ *
+ * Cada pestaña tiene su propio `useConfigSave()`. Sin el scope común, guardar Empresa y enseguida
+ * Políticas podía leer la configuración antes del PUT de Empresa y reescribirla con valores viejos.
  */
 export function useConfigSave() {
   const queryClient = useQueryClient();
   return useMutation({
+    scope: CONFIG_SAVE_SCOPE,
     mutationFn: async (variables: ConfigSaveVariables) => {
       if (variables.mode === "create") return configApi.put(variables.request);
       const current = await configApi.get();

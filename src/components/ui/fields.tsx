@@ -82,7 +82,7 @@ export function TextAreaField({
         aria-invalid={error ? true : undefined}
         aria-describedby={error || hint ? hintId : undefined}
         className={cn(
-          "w-full resize-y rounded-[10px] border border-field px-3 py-2.5 text-[13.5px] leading-[1.5] text-ink outline-none focus:border-brand disabled:cursor-not-allowed disabled:bg-surface disabled:text-muted",
+          "w-full resize-y rounded-[10px] border border-field px-3 py-2.5 text-[13.5px] leading-normal text-ink outline-none focus:border-brand disabled:cursor-not-allowed disabled:bg-surface disabled:text-muted",
           error && "border-[#e0a3a3]",
           className,
         )}

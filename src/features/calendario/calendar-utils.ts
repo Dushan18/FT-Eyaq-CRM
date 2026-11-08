@@ -205,7 +205,8 @@ export type PrepareAction = "prepared" | "mark" | "none";
 
 /**
  * Qué muestra el panel de detalle bajo los datos de la reserva:
- * - "prepared": ya está preparada (indicador fijo, no se puede deshacer).
+ * - "prepared": ya está preparada (indicador fijo). No vuelve a Confirmada directamente: solo si se
+ *   reprograma (pasa a Reprogramada y desde ahí se puede confirmar).
  * - "mark": el rol puede escribir y el backend permite la transición al estado de preparada.
  * - "none": nada (rol de solo lectura o estado que ya no admite la transición: en servicio, completada…).
  */

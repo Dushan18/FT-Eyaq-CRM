@@ -1,21 +1,26 @@
 "use client";
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useState, type ReactNode } from "react";
 import { collectPages } from "@/lib/api/client";
 import { requestsApi } from "@/lib/api/endpoints";
 import { qk } from "@/lib/api/query-keys";
 import type { ReservationRequest, ReservationRequestStatus } from "@/lib/api/types";
-import { channelMeta } from "@/lib/domain/channels";
+import { useSession } from "@/lib/auth/session";
 import { customerName, itemName } from "@/lib/domain/conversation";
-import { REQUEST_TAB_STATUSES, requestStatusView, type RequestTab } from "@/lib/domain/statuses";
+import { REQUEST_STATUS, REQUEST_TAB_STATUSES, requestStatusView, type RequestTab } from "@/lib/domain/statuses";
 import { formatAgoLong, formatDayTime } from "@/lib/format/dates";
+import { cn } from "@/lib/format/text";
 import { useNow } from "@/lib/hooks/use-now";
 import { useOpenChat } from "@/lib/hooks/use-open-chat";
 import { pickOption, useUrlParams } from "@/lib/hooks/use-url-state";
 import { useRestaurant } from "@/lib/restaurant";
-import { ChannelDot, KpiCard, PageHeader, Panel, Pill, Segmented } from "@/components/ui/primitives";
+import { Button, ChannelDot, KpiCard, PageHeader, Panel, Pill, Segmented } from "@/components/ui/primitives";
 import { PaginationBar } from "@/components/ui/pagination";
 import { EmptyState, ErrorState, InlineNotice, LoadingState } from "@/components/ui/state";
+import { parsePage } from "@/features/clientes/clientes-utils";
+import { CancelRequestDialog, EditRequestDialog, NewRequestDialog } from "./request-form";
+import { isEditableRequest } from "./request-form-logic";
 
 const TABS: ReadonlyArray<{ value: RequestTab; label: string }> = [
   { value: "todas", label: "Todas" },
@@ -25,7 +30,17 @@ const TABS: ReadonlyArray<{ value: RequestTab; label: string }> = [
 ];
 
 const PAGE_SIZE = 50;
+
+const linkButton = "cursor-pointer border-0 bg-transparent p-0 font-semibold text-brand hover:underline";
 const COLUMNS = "grid-cols-[150px_minmax(150px,1.3fr)_150px_70px_minmax(130px,1.1fr)_150px_150px]";
+/** Con permiso de editar o cancelar se añade la columna de acciones. */
+const COLUMNS_WITH_ACTIONS = "grid-cols-[150px_minmax(150px,1.3fr)_150px_70px_minmax(130px,1.1fr)_150px_150px_140px]";
+/** Columnas mínimas + huecos + relleno (1058 px; 1210 px con acciones): por debajo, la tabla se desplaza. */
+const TABLE_MIN_WIDTH = "min-w-265";
+const TABLE_MIN_WIDTH_WITH_ACTIONS = "min-w-303";
+
+/** Pestañas y KPI que dependen del flujo del dueño (enviar, aceptar y rechazar), que bk-crm aún no tiene. */
+const OWNER_FLOW_SOON = "Flujo del dueño: próximamente";
 
 /** Total de solicitudes en un estado (lectura barata: limit=1 y se usa `total`). */
 function useStatusCount(status: ReservationRequestStatus) {
@@ -36,26 +51,52 @@ function useStatusCount(status: ReservationRequestStatus) {
   });
 }
 
-function KpiValue({ query }: { query: { data?: number; isError: boolean; isLoading: boolean } }) {
-  if (query.isLoading) return <span className="text-faint">…</span>;
-  if (query.isError) return <span title="No se pudo cargar">—</span>;
-  return <>{query.data ?? 0}</>;
+interface KpiQuery {
+  data?: number;
+  isError: boolean;
+  isPaused: boolean;
+}
+
+/**
+ * Sin datos todavía: cargando, sin conexión ("…") o error ("—"); nunca un 0 inventado. Con datos, se
+ * muestran aunque falle una actualización en segundo plano.
+ */
+function KpiValue({ query }: { query: KpiQuery }) {
+  if (query.data === undefined) {
+    if (query.isError) return <span title="No se pudo cargar">—</span>;
+    return (
+      <span className="text-faint" title={query.isPaused ? "Sin conexión" : undefined}>
+        …
+      </span>
+    );
+  }
+  return <span title={query.isError ? "No se pudo actualizar: es el último dato cargado" : undefined}>{query.data}</span>;
 }
 
 export function SolicitudesView() {
   const url = useUrlParams();
   const tab = pickOption(url.get("tab"), ["todas", "esperando", "aceptadas", "rechazadas"] as const, "todas");
-  const page = Math.max(1, Number(url.get("pagina")) || 1);
+  // Entero de 1 a 1 000 000: con decimales o más grande, el backend responde 400.
+  const page = parsePage(url.get("pagina"));
   const statuses = REQUEST_TAB_STATUSES[tab];
+  const session = useSession();
+  const canEdit = session.can("request.edit");
+  const canCancel = session.can("request.cancel");
+  const withActions = canEdit || canCancel;
+  const columns = withActions ? COLUMNS_WITH_ACTIONS : COLUMNS;
+  const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<ReservationRequest | null>(null);
+  const [cancelling, setCancelling] = useState<ReservationRequest | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const sent = useStatusCount("SENT_TO_OWNER");
   const waiting = useStatusCount("WAITING_RESPONSE");
   const accepted = useStatusCount("ACCEPTED");
   const rejected = useStatusCount("REJECTED");
-  const waitingTotal = {
-    data: (sent.data ?? 0) + (waiting.data ?? 0),
+  const waitingTotal: KpiQuery = {
+    data: sent.data === undefined || waiting.data === undefined ? undefined : sent.data + waiting.data,
     isError: sent.isError || waiting.isError,
-    isLoading: sent.isLoading || waiting.isLoading,
+    isPaused: sent.isPaused || waiting.isPaused,
   };
 
   const list = useQuery({
@@ -79,25 +120,58 @@ export function SolicitudesView() {
     refetchInterval: 30_000,
   });
 
+  // Regla de la app: "no se pudo consultar" o "sin conexión" nunca se muestran como "no hay solicitudes".
+  const rows = list.data?.data ?? [];
+  let state: ReactNode = null;
+  if (list.data === undefined) {
+    state = list.isError ? (
+      <ErrorState error={list.error} subject="las solicitudes" onRetry={() => void list.refetch()} className="border-t border-line-2" />
+    ) : (
+      <LoadingState
+        label={list.isPaused ? "Sin conexión. Se cargará al recuperar la red." : "Cargando solicitudes…"}
+        className="border-t border-line-2"
+      />
+    );
+  } else if (rows.length === 0 && list.data.pagination.total > 0) {
+    // La URL pide una página que ya no existe: no es "sin solicitudes".
+    state = (
+      <EmptyState className="border-t border-line-2">
+        No hay solicitudes en esta página.{" "}
+        <button type="button" onClick={() => url.set({ pagina: null })} className={linkButton}>
+          Ir a la primera página
+        </button>
+      </EmptyState>
+    );
+  } else if (rows.length === 0) {
+    state = <EmptyState className="border-t border-line-2">No hay solicitudes en esta pestaña.</EmptyState>;
+  }
+
   return (
-    <Panel className="flex h-full flex-col gap-[22px] overflow-y-auto px-8 py-7">
+    <Panel className="flex h-full flex-col gap-5.5 overflow-y-auto px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
       <PageHeader
         title="Solicitudes"
-        subtitle="Samanta envía cada solicitud al WhatsApp del dueño. Solo las aceptadas pasan al calendario."
+        subtitle="Pedidos de reserva registrados en el CRM. Con fecha, hora y personas quedan «Lista para enviar»."
         actions={
-          <Segmented
-            ariaLabel="Filtrar solicitudes por estado"
-            options={TABS}
-            value={tab}
-            onChange={(value) => url.set({ tab: value === "todas" ? null : value, pagina: null })}
-          />
+          <div className="flex flex-wrap items-center gap-3">
+            <Segmented
+              ariaLabel="Filtrar solicitudes por estado"
+              options={TABS}
+              value={tab}
+              onChange={(value) => url.set({ tab: value === "todas" ? null : value, pagina: null })}
+            />
+            {canEdit ? (
+              <Button className="h-9 px-4" onClick={() => setCreating(true)}>
+                Nueva solicitud
+              </Button>
+            ) : null}
+          </div>
         }
       />
 
-      <div className="grid grid-cols-4 gap-3">
-        <KpiCard label="Esperando al dueño" value={<KpiValue query={waitingTotal} />} valueColor="#b14a0b" />
-        <KpiCard label="Aceptadas" value={<KpiValue query={accepted} />} valueColor="#14753f" />
-        <KpiCard label="Rechazadas" value={<KpiValue query={rejected} />} valueColor="#b42323" />
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <KpiCard label="Esperando al dueño" value={<KpiValue query={waitingTotal} />} valueColor="#b14a0b" sub={OWNER_FLOW_SOON} />
+        <KpiCard label="Aceptadas" value={<KpiValue query={accepted} />} valueColor="#14753f" sub={OWNER_FLOW_SOON} />
+        <KpiCard label="Rechazadas" value={<KpiValue query={rejected} />} valueColor="#b42323" sub={OWNER_FLOW_SOON} />
         <KpiCard
           label="Respuesta media"
           value={<span title="El backend aún no registra cuándo responde el dueño">—</span>}
@@ -105,54 +179,133 @@ export function SolicitudesView() {
         />
       </div>
 
+      {tab !== "todas" ? (
+        <InlineNotice>
+          Esta pestaña depende del envío al dueño para aceptar o rechazar, que llegará próximamente. Por ahora las solicitudes
+          quedan en «Negociando», «Lista para enviar» o «Cancelada».
+        </InlineNotice>
+      ) : null}
+
+      {notice ? (
+        <InlineNotice>
+          {notice}{" "}
+          <button type="button" onClick={() => setNotice(null)} className={linkButton}>
+            Ocultar aviso
+          </button>
+        </InlineNotice>
+      ) : null}
+
       {list.data && "truncated" in list.data && list.data.truncated ? (
         <InlineNotice tone="warning">Se muestran las primeras 500 solicitudes de cada estado.</InlineNotice>
       ) : null}
 
-      <div className="overflow-hidden rounded-2xl border border-card" role="table" aria-label="Solicitudes de reserva">
-        <div role="row" className={`grid ${COLUMNS} gap-3 bg-surface px-[18px] py-3 text-[11px] font-bold tracking-[.06em] text-subtle`}>
-          <span role="columnheader">ID</span>
-          <span role="columnheader">CLIENTE</span>
-          <span role="columnheader">FECHA</span>
-          <span role="columnheader">PERS.</span>
-          <span role="columnheader">SERVICIO</span>
-          <span role="columnheader">ESTADO</span>
-          <span role="columnheader">ÚLTIMO CAMBIO</span>
-        </div>
-        {list.isLoading ? (
-          <LoadingState label="Cargando solicitudes…" className="border-t border-line-2" />
-        ) : list.isError ? (
-          <ErrorState error={list.error} subject="las solicitudes" onRetry={() => void list.refetch()} className="border-t border-line-2" />
-        ) : list.data && list.data.data.length > 0 ? (
-          <>
-            {list.data.data.map((r) => (
-              <RequestRow key={r.id} request={r} />
-            ))}
-            <PaginationBar pagination={list.data.pagination} onPage={(p) => url.set({ pagina: p > 1 ? String(p) : null })} />
-          </>
-        ) : (
-          <EmptyState className="border-t border-line-2">No hay solicitudes en esta pestaña.</EmptyState>
+      {list.isError && list.data !== undefined ? (
+        // Falló una actualización en segundo plano: se conservan los últimos datos en vez de vaciar la tabla.
+        <InlineNotice tone="warning">
+          No se pudo actualizar la lista; se muestran los últimos datos cargados.{" "}
+          <button type="button" onClick={() => void list.refetch()} className={linkButton}>
+            Reintentar
+          </button>
+        </InlineNotice>
+      ) : null}
+
+      <div
+        className={cn(
+          "overflow-hidden rounded-2xl border border-card transition-opacity",
+          list.isPlaceholderData && "opacity-60",
         )}
+      >
+        {/* En pantallas estrechas la tabla se desplaza en horizontal dentro del recuadro (no la página). */}
+        <div className="relative overflow-x-auto">
+        <div
+          role="table"
+          aria-label="Solicitudes de reserva"
+          aria-busy={list.isPlaceholderData || undefined}
+          className={withActions ? TABLE_MIN_WIDTH_WITH_ACTIONS : TABLE_MIN_WIDTH}
+        >
+          <div role="row" className={`grid ${columns} gap-3 bg-surface px-4.5 py-3 text-[11px] font-bold tracking-[.06em] text-subtle`}>
+            <span role="columnheader">ID</span>
+            <span role="columnheader">CLIENTE</span>
+            <span role="columnheader">FECHA</span>
+            <span role="columnheader">PERS.</span>
+            <span role="columnheader">SERVICIO</span>
+            <span role="columnheader">ESTADO</span>
+            <span role="columnheader">ÚLTIMO CAMBIO</span>
+            {withActions ? (
+              <span role="columnheader">
+                <span className="sr-only">Acciones</span>
+              </span>
+            ) : null}
+          </div>
+          {rows.map((r) => (
+            <RequestRow
+              key={r.id}
+              request={r}
+              columns={columns}
+              actions={withActions}
+              onEdit={canEdit ? () => setEditing(r) : undefined}
+              onCancel={canCancel ? () => setCancelling(r) : undefined}
+            />
+          ))}
+        </div>
+        </div>
+        {state}
+        {list.data && rows.length > 0 ? (
+          <PaginationBar pagination={list.data.pagination} onPage={(p) => url.set({ pagina: p > 1 ? String(p) : null })} />
+        ) : null}
       </div>
+
+      <NewRequestDialog
+        open={creating}
+        onClose={() => setCreating(false)}
+        onCreated={(r) => setNotice(`Se creó la solicitud ${r.code} («${REQUEST_STATUS[r.status].label}»).`)}
+      />
+      <EditRequestDialog
+        request={editing}
+        onClose={() => setEditing(null)}
+        onSaved={(r) => setNotice(`Se guardó la solicitud ${r.code}: ahora está «${REQUEST_STATUS[r.status].label}».`)}
+      />
+      <CancelRequestDialog
+        request={cancelling}
+        onClose={() => setCancelling(null)}
+        onCancelled={(r) => setNotice(`Se canceló la solicitud ${r.code}.`)}
+      />
     </Panel>
   );
 }
 
-function RequestRow({ request: r }: { request: ReservationRequest }) {
+const rowButton =
+  "h-7 cursor-pointer whitespace-nowrap rounded-lg border border-button bg-white px-2.5 text-xs font-semibold text-brand hover:bg-brand-soft disabled:opacity-60";
+
+function RequestRow({
+  request: r,
+  columns,
+  actions,
+  onEdit,
+  onCancel,
+}: {
+  request: ReservationRequest;
+  columns: string;
+  /** La tabla tiene columna de acciones (permiso de editar o cancelar). */
+  actions: boolean;
+  onEdit?: () => void;
+  onCancel?: () => void;
+}) {
   const { timeZone } = useRestaurant();
   const now = useNow();
   const chat = useOpenChat();
   const status = requestStatusView(r.status);
-  const ch = channelMeta(r.sourceChannel);
-  const name = customerName(r.customer);
+  const name = customerName(r.customer, r.sourceChannel);
+  // Editar y cancelar solo en «Negociando» y «Lista para enviar» (en otro estado el backend responde 409).
+  const editable = isEditableRequest(r.status);
 
   return (
-    <div role="row" className={`grid ${COLUMNS} items-center gap-3 border-t border-line-2 px-[18px] py-3.5 text-[13.5px]`}>
+    <div role="row" className={`grid ${columns} items-center gap-3 border-t border-line-2 px-4.5 py-3.5 text-[13.5px]`}>
       <span role="cell" className="font-bold">
         {r.code}
       </span>
       <span role="cell" className="flex min-w-0 items-center gap-2">
-        <ChannelDot color={ch.color} short={ch.short} label={ch.label} />
+        <ChannelDot channel={r.sourceChannel} />
         <span className="truncate">{name}</span>
       </span>
       <span role="cell">{r.reservationAt ? formatDayTime(r.reservationAt, timeZone) : <span className="text-subtle">Por definir</span>}</span>
@@ -172,11 +325,25 @@ function RequestRow({ request: r }: { request: ReservationRequest }) {
           onClick={() => void chat.open(r.customerId, r.sourceChannel)}
           disabled={chat.pendingId === r.customerId}
           aria-label={`Abrir la conversación de ${name}`}
-          className="h-7 cursor-pointer whitespace-nowrap rounded-lg border border-button bg-white px-2.5 text-xs font-semibold text-brand hover:bg-brand-soft disabled:opacity-60"
+          className={rowButton}
         >
           {chat.pendingId === r.customerId ? "…" : "Chat"}
         </button>
       </span>
+      {actions ? (
+        <span role="cell" className="flex justify-end gap-1.5">
+          {editable && onEdit ? (
+            <button type="button" onClick={onEdit} aria-label={`Editar la solicitud ${r.code}`} className={rowButton}>
+              Editar
+            </button>
+          ) : null}
+          {editable && onCancel ? (
+            <button type="button" onClick={onCancel} aria-label={`Cancelar la solicitud ${r.code}`} className={rowButton}>
+              Cancelar
+            </button>
+          ) : null}
+        </span>
+      ) : null}
     </div>
   );
 }

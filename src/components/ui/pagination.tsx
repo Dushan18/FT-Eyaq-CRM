@@ -7,7 +7,7 @@ export function PaginationBar({ pagination, onPage }: { pagination: Pagination; 
   const button =
     "h-8 cursor-pointer rounded-lg border border-button bg-white px-3 text-[12.5px] font-semibold text-ink-2 hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50";
   return (
-    <div className="flex items-center justify-between border-t border-line-2 px-[18px] py-3 text-[12.5px] text-muted">
+    <div className="flex items-center justify-between border-t border-line-2 px-4.5 py-3 text-[12.5px] text-muted">
       <span>
         Página {page} de {totalPages} · {total} resultados
       </span>

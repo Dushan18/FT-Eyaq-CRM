@@ -114,7 +114,7 @@ export function EstadisticasView() {
   const requestsFailed = "No se pudieron cargar las solicitudes";
 
   return (
-    <Panel className="flex h-full flex-col gap-[22px] overflow-y-auto px-8 py-7">
+    <Panel className="flex h-full flex-col gap-5.5 overflow-y-auto px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
       <div className="flex flex-col gap-2">
         <PageHeader
           title="Estadísticas"
@@ -159,7 +159,7 @@ export function EstadisticasView() {
         </InlineNotice>
       ) : null}
 
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <KpiCard
           size="lg"
           label="Reservas"
@@ -198,7 +198,7 @@ export function EstadisticasView() {
         />
       </div>
 
-      <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] gap-3">
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
         <StatCard title="Canales" aside={<ChannelLegend />}>
           <SourceState sources={[conversations, requests]} subject={sourceSubject(conversations, requests)}>
             {channels ? <ChannelRows rows={channels} /> : null}
@@ -276,12 +276,12 @@ function SourceState({ sources, subject, children }: { sources: SourceQuery[]; s
 function ChannelLegend() {
   return (
     <div className="flex gap-3 text-[11.5px] text-muted">
-      <span className="flex items-center gap-[5px]">
-        <span className="size-2 rounded-[2px] bg-brand-bar" aria-hidden="true" />
+      <span className="flex items-center gap-1.25">
+        <span className="size-2 rounded-xs bg-brand-bar" aria-hidden="true" />
         Conversaciones
       </span>
-      <span className="flex items-center gap-[5px]">
-        <span className="size-2 rounded-[2px] bg-brand" aria-hidden="true" />
+      <span className="flex items-center gap-1.25">
+        <span className="size-2 rounded-xs bg-brand" aria-hidden="true" />
         Solicitudes
       </span>
     </div>
@@ -324,7 +324,7 @@ function ServiceRows({ rows }: { rows: ServiceCount[] }) {
   return (
     <ol className="m-0 flex list-none flex-col gap-3.5 p-0">
       {rows.map((s) => (
-        <li key={s.name} className="flex flex-col gap-[5px]">
+        <li key={s.name} className="flex flex-col gap-1.25">
           <div className="flex justify-between gap-3 text-[13px]">
             <span className="min-w-0 truncate font-semibold">{s.name}</span>
             <span className="shrink-0 text-muted">

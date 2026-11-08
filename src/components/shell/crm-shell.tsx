@@ -20,7 +20,9 @@ function Centered({ children }: { children: ReactNode }) {
 }
 
 /**
- * Marco del mockup: 100vh, mínimo 1240 × 720, navegación de 76 px y contenido.
+ * Marco del CRM: ocupa la altura visible de la ventana (`dvh`, que en móvil descuenta las barras del
+ * navegador) y cada vista desplaza su propio contenido. Desde `md` la navegación es la columna de 76 px del
+ * mockup; en pantallas más estrechas pasa a una barra inferior.
  * La vista siempre se renderiza (aunque oculta mientras carga la sesión) para que Next.js pueda
  * prerenderizar y validar el segmento; si el rol no tiene la vista, no se monta.
  */
@@ -70,9 +72,10 @@ function ShellFrame({ children }: { children: ReactNode }) {
   const mountView = !ready || allowed;
 
   return (
-    <div className="grid h-screen min-h-[720px] min-w-[1240px] grid-cols-[76px_minmax(0,1fr)] grid-rows-[minmax(0,1fr)] gap-3 p-4">
+    <div className="grid h-dvh min-h-100 grid-cols-[minmax(0,1fr)] grid-rows-[minmax(0,1fr)_auto] gap-2 p-2 md:min-h-120 md:grid-cols-[76px_minmax(0,1fr)] md:grid-rows-[minmax(0,1fr)] md:gap-3 md:p-4">
       <Sidebar />
-      <div className="min-h-0 min-w-0">
+      {/* En móvil la navegación (primera en el DOM) va abajo: el contenido ocupa la primera fila. */}
+      <div className="row-start-1 min-h-0 min-w-0 md:col-start-2">
         {overlay}
         {mountView ? (
           <div className="h-full min-h-0" hidden={overlay !== null}>

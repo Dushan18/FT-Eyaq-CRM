@@ -67,7 +67,7 @@ function SamantaContent({ config, save }: { config: RestaurantConfig; save: Conf
           return (
             <div key={channel} className="flex items-center justify-between">
               <span className="flex items-center gap-2 text-[13.5px]">
-                <ChannelDot color={meta.color} short={meta.short} label={meta.label} />
+                <ChannelDot channel={channel} />
                 {meta.label}
               </span>
               <Toggle checked={false} disabled label={`${meta.label}: pendiente en el backend`} />

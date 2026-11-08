@@ -23,10 +23,11 @@ export function AjustesShell({ children }: { children: ReactNode }) {
   const blocked = session.status === "ready" && current !== null && !canViewSettingsTab(session.roles, current);
 
   return (
-    <Panel className="grid h-full grid-cols-[200px_minmax(0,1fr)] content-start gap-7 overflow-y-auto px-8 py-7">
-      <div className="flex flex-col gap-1">
-        <h1 className="m-0 mb-3 text-2xl font-bold">Ajustes</h1>
-        <nav aria-label="Secciones de Ajustes" className="flex flex-col gap-1">
+    <Panel className="grid h-full content-start gap-5 overflow-y-auto px-4 py-5 sm:px-6 md:grid-cols-[200px_minmax(0,1fr)] md:gap-7 lg:px-8 lg:py-7">
+      <div className="flex min-w-0 flex-col gap-1">
+        <h1 className="m-0 mb-3 text-[22px] font-bold sm:text-2xl">Ajustes</h1>
+        {/* En pantallas estrechas las secciones van en una fila que se desplaza en horizontal. */}
+        <nav aria-label="Secciones de Ajustes" className="relative -mx-1 flex gap-1 overflow-x-auto px-1 pb-1 md:mx-0 md:flex-col md:overflow-visible md:p-0">
           {tabs.map((tab) => {
             const active = tab.key === current;
             return (
@@ -35,7 +36,7 @@ export function AjustesShell({ children }: { children: ReactNode }) {
                 href={tab.href}
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                  "flex h-[38px] items-center rounded-[10px] px-3 text-[13.5px] font-semibold no-underline transition-colors",
+                  "flex h-9.5 shrink-0 items-center whitespace-nowrap rounded-[10px] px-3 text-[13.5px] font-semibold no-underline transition-colors",
                   active ? "bg-brand-soft" : "hover:bg-surface",
                 )}
                 // Color en línea: la regla global de `a` (sin capa) se impone a las utilidades de Tailwind.
@@ -47,7 +48,7 @@ export function AjustesShell({ children }: { children: ReactNode }) {
           })}
         </nav>
       </div>
-      <div className="flex min-w-0 max-w-[760px] flex-col gap-5 pt-[50px]">
+      <div className="flex min-w-0 max-w-190 flex-col gap-5 md:pt-12.5">
         {blocked ? <NoAccess view={settingsTabLink(current).label} /> : children}
       </div>
     </Panel>

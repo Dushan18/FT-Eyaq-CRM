@@ -3,15 +3,22 @@
  * mensajes entrantes de clientes, lo que haría Samanta (responder y crear la solicitud) y la
  * respuesta del dueño (ACEPTAR / RECHAZAR) a una solicitud.
  *
- * Los estados que produce (WAITING_RESPONSE → ACCEPTED/REJECTED, mensajes salientes sin autor)
- * existen en el esquema de bk-crm, pero hoy el backend aún no los genera por HTTP.
+ * Los estados de solicitud que produce (WAITING_RESPONSE → ACCEPTED/REJECTED) y las reservas creadas al
+ * aceptar existen en el esquema de bk-crm, pero hoy el backend no los genera por HTTP.
+ *
+ * Los mensajes de Samanta sí siguen el modelo de bk-crm: cada uno sale de un borrador APPROVED
+ * (`outboundMessageId`) y su autor es quien lo aprobó (el responsable de la conversación o, si no hay
+ * uno elegible, el primer ADMIN activo). El simulador lo deja ya entregado.
  */
 import { TZDate } from "@date-fns/tz";
 import type { ContactChannel, Message } from "@/lib/api/types";
+import { RESERVED_IDEMPOTENCY_PREFIX } from "@/lib/api/types";
 import { formatDayTime } from "@/lib/format/dates";
+import { isEligibleAssignee } from "./http";
+import { approvedDraft, knowledgeHash } from "./samanta";
 import { buildSeed } from "./seed";
 import { mockStore } from "./server";
-import { iso, resetStore, uuid, type MockConversation, type MockCustomer, type MockRequest, type MockReservation } from "./store";
+import { iso, lastSequence, resetStore, uuid, type MockConversation, type MockCustomer, type MockRequest, type MockReservation } from "./store";
 
 /** Regla 8 del flujo: los grupos de más de 20 personas los atiende una persona. */
 export const MAX_GROUP_FOR_SAMANTA = 20;
@@ -39,16 +46,12 @@ const SAMANTA_TEXT = {
   rejected: "El restaurante no puede recibir tu reserva en ese horario. ¿Te propongo otra fecha u hora?",
 } as const;
 
-function nextSequence(conversationId: string) {
-  return mockStore().messages.filter((m) => m.conversationId === conversationId).reduce((max, m) => Math.max(max, m.sequence), 0) + 1;
-}
-
 function baseMessage(conv: MockConversation, now: number): Message {
   return {
     id: uuid(),
     conversationId: conv.id,
     channel: conv.channel,
-    sequence: nextSequence(conv.id),
+    sequence: lastSequence(mockStore(), conv.id) + 1,
     externalMessageId: `mock-sim-${Math.random().toString(36).slice(2, 10)}`,
     direction: "INBOUND",
     status: "PROCESSED",
@@ -70,21 +73,52 @@ function baseMessage(conv: MockConversation, now: number): Message {
   };
 }
 
-/** Mensaje automático de Samanta (OUTBOUND sin autor). No escribe si la conversación está en pausa. */
+/** Quien aprueba lo que escribe Samanta: el responsable de la conversación si es elegible; si no, el primer ADMIN activo. */
+function samantaReviewer(conv: MockConversation): string {
+  const store = mockStore();
+  const assignee = store.users.find((u) => u.id === conv.assignedUserId);
+  if (assignee && isEligibleAssignee(assignee)) return assignee.id;
+  const admin = store.users.find((u) => u.isActive && u.roles.includes("ADMIN"));
+  if (!admin) throw new SimulatorError("No hay un ADMIN activo que apruebe el borrador de Samanta.");
+  return admin.id;
+}
+
+/**
+ * Mensaje de Samanta: un borrador APPROVED y su OUTBOUND con autor (quien lo aprobó), ya entregado.
+ * No escribe si la conversación está en pausa.
+ */
 function samantaSays(conv: MockConversation, text: string, now: number): Message | null {
   if (conv.isAssistantPaused) return null;
   const store = mockStore();
+  const reviewerId = samantaReviewer(conv);
+  const own = store.messages.filter((m) => m.conversationId === conv.id).sort((a, b) => b.sequence - a.sequence);
   const message: Message = {
     ...baseMessage(conv, now),
     direction: "OUTBOUND",
     status: "DELIVERED",
     content: text,
+    authorUserId: reviewerId,
+    externalMessageId: `${conv.channel === "FACEBOOK" ? "mock-mid" : "mock-wamid"}-${Math.random().toString(36).slice(2, 10)}`,
     sentAt: iso(now),
     deliveredAt: iso(now + 1500),
   };
   store.messages.push(message);
   conv.lastMessageAt = iso(now);
   conv.updatedAt = iso(now);
+  const source = own.find((m) => m.direction === "INBOUND") ?? own[0];
+  if (source) {
+    const draft = approvedDraft({
+      source,
+      outbound: message,
+      reviewerId,
+      businessName: store.config?.businessName ?? "el restaurante",
+      knowledgeHash: knowledgeHash(store),
+      requestedAt: now - 5_000,
+      approvedAt: now,
+    });
+    store.drafts.push(draft);
+    store.idempotency.set(`${conv.id}:${RESERVED_IDEMPOTENCY_PREFIX}${draft.id}`, { messageId: message.id, authorUserId: reviewerId, content: text });
+  }
   return message;
 }
 
@@ -117,14 +151,19 @@ export function runSimulator(action: SimulatorAction) {
     let conv = action.conversationId ? findConversation(action.conversationId) : undefined;
     if (!conv) {
       const channel = action.canal ?? "WHATSAPP";
-      const [first, ...rest] = (action.nombre ?? "").trim().split(/\s+/).filter(Boolean);
+      const fullName = (action.nombre ?? "").trim().replace(/\s+/g, " ");
+      const [first, ...rest] = fullName.split(" ").filter(Boolean);
+      // Messenger, como el webhook de bk-crm: nombre del perfil entero en firstName, sin teléfono ni correo
+      // y con identidad de Messenger (PSID), que es el destinatario de las respuestas.
+      const messenger = channel === "FACEBOOK";
       const customer: MockCustomer = {
         id: uuid(),
-        firstName: first ?? null,
-        lastName: rest.length ? rest.join(" ") : null,
-        phone: `+519${String(Math.floor(10_000_000 + Math.random() * 89_999_999))}`,
+        firstName: messenger ? fullName || null : (first ?? null),
+        lastName: messenger ? null : rest.length ? rest.join(" ") : null,
+        phone: messenger ? null : `+519${String(Math.floor(10_000_000 + Math.random() * 89_999_999))}`,
         phoneCountry: null,
         email: null,
+        messengerPsid: messenger ? String(Math.floor(1e15 + Math.random() * 8e15)) : null,
         sourceChannel: channel,
         status: "NEW",
         firstContactAt: iso(now),

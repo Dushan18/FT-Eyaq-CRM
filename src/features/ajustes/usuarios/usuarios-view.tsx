@@ -145,7 +145,8 @@ function UsuariosContent({ currentUserId }: { currentUserId: string | null }) {
         </InlineNotice>
       ) : null}
 
-      <div className="overflow-hidden rounded-[14px] border border-card" role="table" aria-label="Usuarios y roles">
+      {/* En pantallas estrechas la tabla se desplaza en horizontal dentro del recuadro. */}
+      <div className="relative overflow-x-auto rounded-[14px] border border-card" role="table" aria-label="Usuarios y roles">
         <div role="row" className="sr-only">
           <span role="columnheader">Usuario</span>
           <span role="columnheader">Rol</span>
@@ -194,7 +195,7 @@ function UserRow({
   const role = roleSummary(user.roles);
 
   return (
-    <div role="row" className={`grid ${COLUMNS} items-center gap-3.5 border-b border-line-2 px-4 py-3`}>
+    <div role="row" className={`grid min-w-144 ${COLUMNS} items-center gap-3.5 border-b border-line-2 px-4 py-3`}>
       <span role="cell" className="flex min-w-0 flex-col">
         <span className="truncate text-[13.5px] font-semibold" title={name}>
           {name}

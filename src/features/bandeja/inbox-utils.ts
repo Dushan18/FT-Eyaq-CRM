@@ -4,9 +4,12 @@
  */
 import { ApiError } from "@/lib/api/client";
 import type { ContactChannel, Conversation, Message, Reservation, ReservationRequest } from "@/lib/api/types";
+import { isSendableChannel } from "@/lib/api/types";
+import { isConnectionError, isDisabledInServer } from "@/lib/api/errors";
+import { outboundErrorKind, outboundErrorText, sendChannelName, windowClosedText } from "./channel-utils";
 import type { RoleCode } from "@/lib/auth/permissions";
 import { can } from "@/lib/auth/permissions";
-import { channelMeta, SENDABLE_CHANNELS } from "@/lib/domain/channels";
+import { channelMeta } from "@/lib/domain/channels";
 import { conversationMode, messageAuthor } from "@/lib/domain/conversation";
 import { RESERVATION_STATUS, requestStatusView } from "@/lib/domain/statuses";
 import { TONES, type Tone } from "@/lib/domain/tones";
@@ -72,9 +75,9 @@ export function lastInboundAt(messages: readonly Message[]): number | null {
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Estimación de la ventana de 24 h de WhatsApp (el backend no la expone). Usa la misma regla que el
- * backend: el último mensaje entrante con `occurredAt` en las últimas 24 h. El backend puede ser más
- * estricto (teléfono o número del negocio distintos), nunca más permisivo; su respuesta manda.
+ * Estimación de la ventana de 24 h de WhatsApp y Messenger (el backend no la expone). Usa la misma regla
+ * que el backend: el último mensaje entrante con `occurredAt` en las últimas 24 h. El backend puede ser más
+ * estricto (teléfono, PSID o número/página del negocio distintos), nunca más permisivo; su respuesta manda.
  */
 export function estimateReplyWindow(messages: readonly Message[], now: number): { open: boolean; closesAt: number | null } {
   let last = 0;
@@ -89,32 +92,26 @@ export function estimateReplyWindow(messages: readonly Message[], now: number): 
 
 export type StatusTone = "muted" | "warning" | "error";
 
-const FAILED_TEXT: Record<string, string> = {
-  WHATSAPP_WINDOW_CLOSED: "No se envió: la ventana de 24 h estaba cerrada",
-  WHATSAPP_SEND_REJECTED: "No se envió: WhatsApp lo rechazó",
-  WHATSAPP_DELIVERY_FAILED: "WhatsApp no pudo entregarlo",
-  WHATSAPP_SEND_INVALID: "No se envió: datos no válidos",
-};
-
 /**
- * Estado de entrega visible de un mensaje saliente. Lo normal es silencioso: para los mensajes de
- * Samanta solo se muestran problemas o envíos en curso; para los del equipo, además, los checks.
+ * Estado de entrega visible de un mensaje saliente (WhatsApp y Messenger). Lo normal es silencioso: para los
+ * mensajes de Samanta solo se muestran problemas o envíos en curso; para los del equipo, además, los checks.
+ * `*_RATE_LIMITED` llega en QUEUED y también en el SENDING del reintento. Messenger nunca llega a READ.
  */
-export function outboundStatusView(m: Message): { text: string; tone: StatusTone } | null {
+export function outboundStatusView(m: Message, isSamanta = false): { text: string; tone: StatusTone } | null {
   if (m.direction !== "OUTBOUND") return null;
-  const byOperator = m.authorUserId !== null;
+  const byTeam = !isSamanta;
   switch (m.status) {
     case "QUEUED":
     case "SENDING":
-      return { text: m.errorCode === "WHATSAPP_RATE_LIMITED" ? "Reintentando…" : "Enviando…", tone: "muted" };
+      return { text: outboundErrorKind(m.errorCode) === "RATE_LIMITED" ? "Reintentando…" : "Enviando…", tone: "muted" };
     case "SENT":
-      return byOperator ? { text: "✓ Enviado", tone: "muted" } : null;
+      return byTeam ? { text: "✓ Enviado", tone: "muted" } : null;
     case "DELIVERED":
-      return byOperator ? { text: "✓✓ Entregado", tone: "muted" } : null;
+      return byTeam ? { text: "✓✓ Entregado", tone: "muted" } : null;
     case "READ":
-      return byOperator ? { text: "✓✓ Leído", tone: "muted" } : null;
+      return byTeam ? { text: "✓✓ Leído", tone: "muted" } : null;
     case "FAILED":
-      return { text: (m.errorCode && FAILED_TEXT[m.errorCode]) || "No se envió", tone: "error" };
+      return { text: outboundErrorText(m.errorCode) ?? "No se envió", tone: "error" };
     case "UNKNOWN":
       return { text: "Estado incierto: verifica antes de reenviar", tone: "warning" };
     default:
@@ -122,17 +119,21 @@ export function outboundStatusView(m: Message): { text: string; tone: StatusTone
   }
 }
 
-/** Etiqueta de quien escribió una burbuja saliente. */
+/**
+ * Etiqueta de quien escribió una burbuja saliente: «Samanta · IA» si salió de un borrador aprobado,
+ * «Tú», el nombre del responsable si fue él, o «Equipo» (OWNER y OPERATOR no pueden traducir otros ids
+ * a nombres: GET /users es solo para ADMIN).
+ */
 export function outboundAuthorLabel(
-  m: Pick<Message, "direction" | "authorUserId">,
+  m: Pick<Message, "id" | "direction" | "authorUserId">,
   meId: string | null,
   assignee: Conversation["assignedUser"],
+  samantaIds?: ReadonlySet<string>,
 ): string {
-  const author = messageAuthor(m);
-  if (author === "samanta") return "Samanta · IA";
+  if (messageAuthor(m, samantaIds) === "samanta") return "Samanta · IA";
   if (m.authorUserId && m.authorUserId === meId) return "Tú";
-  if (assignee && m.authorUserId === assignee.id) return personName(assignee.firstName, assignee.lastName, "Operador");
-  return "Operador";
+  if (assignee && m.authorUserId === assignee.id) return personName(assignee.firstName, assignee.lastName, "Equipo");
+  return "Equipo";
 }
 
 // ---------------------------------------------------------------- lista
@@ -243,13 +244,19 @@ export function composerState(
   if (!can(roles, "conversation.send")) {
     return { enabled: false, reason: "Tu rol puede leer esta conversación, pero no responder." };
   }
-  if (!SENDABLE_CHANNELS.includes(conversation.channel)) {
+  if (!isSendableChannel(conversation.channel)) {
+    // Instagram ya recibe mensajes en bk-crm, pero aún no se puede responder (400 «Conversación sin
+    // destinatario habilitado»). No usa sendChannelName ni windowClosedText: son textos de los canales con envío.
+    if (conversation.channel === "INSTAGRAM") {
+      return { enabled: false, reason: "Instagram por ahora solo recibe mensajes: todavía no se puede responder desde el CRM." };
+    }
     return {
       enabled: false,
-      reason: `El envío por ${channelMeta(conversation.channel).label} aún no está disponible: hoy solo WhatsApp tiene integración.`,
+      reason: `El envío por ${channelMeta(conversation.channel).label} aún no está disponible: hoy solo WhatsApp y Messenger tienen integración.`,
     };
   }
-  if (!conversation.customer.phone) {
+  // En Messenger no hay teléfono: el backend resuelve el destinatario con el identificador de la página.
+  if (conversation.channel === "WHATSAPP" && !conversation.customer.phone) {
     return { enabled: false, reason: "El cliente no tiene un teléfono de WhatsApp registrado." };
   }
   const assignedToOther = conversation.assignedUserId !== null && conversation.assignedUserId !== meId;
@@ -260,10 +267,7 @@ export function composerState(
     };
   }
   if (replyWindow && !replyWindow.open) {
-    return {
-      enabled: false,
-      reason: "La ventana de 24 h de WhatsApp está cerrada: podrás responder cuando el cliente vuelva a escribir.",
-    };
+    return { enabled: false, reason: windowClosedText(conversation.channel) };
   }
   const pause = !conversation.isAssistantPaused;
   if (assignedToOther) {
@@ -275,28 +279,33 @@ export function composerState(
   }
   const assign = conversation.assignedUserId === null;
   const notice = pause
-    ? "Samanta está respondiendo. Si escribes, la conversación pasa a tu cargo."
+    ? "Samanta está activa. Si escribes, queda en pausa y la conversación pasa a tu cargo."
     : assign
       ? "Samanta está en pausa. Si escribes, la conversación pasa a tu cargo."
       : null;
   return { enabled: true, notice, plan: { pause, assign } };
 }
 
-/** Mensaje claro para un envío fallido. Con la misma clave de idempotencia se puede reintentar sin duplicar. */
-export function sendErrorText(error: unknown): string {
+/**
+ * Mensaje claro para un envío fallido, según el canal. Con la misma clave de idempotencia se puede reintentar
+ * sin duplicar. Un 503 sin `code` es el canal apagado en el servidor, no una falta de conexión.
+ */
+export function sendErrorText(error: unknown, channel: ContactChannel = "WHATSAPP"): string {
   if (error instanceof ApiError) {
     const text = error.messages.join(" ");
-    if (error.isUnavailable && error.status !== 503) {
+    if (isConnectionError(error)) {
       return "No se pudo confirmar el envío por un problema de conexión. Puedes reintentar: el mensaje no se duplicará.";
     }
-    if (error.status === 503 && /WhatsApp/i.test(text)) return "El envío por WhatsApp no está habilitado en el servidor.";
-    if (error.status === 409 && /ventana/i.test(text)) {
-      return "La ventana de 24 h de WhatsApp está cerrada: podrás responder cuando el cliente vuelva a escribir.";
-    }
+    if (isDisabledInServer(error)) return `El envío por ${sendChannelName(channel)} no está habilitado en el servidor.`;
+    if (error.status === 409 && /ventana/i.test(text)) return windowClosedText(channel);
     if (error.status === 409 && /Idempotency/i.test(text)) {
       return "Este envío ya se había registrado con otro texto. Vuelve a enviarlo.";
     }
-    if (error.status === 400 && /destinatario/i.test(text)) return "El cliente no tiene un número de WhatsApp válido.";
+    if (error.status === 400 && /destinatario/i.test(text)) {
+      return channel === "FACEBOOK"
+        ? "No se puede responder a este cliente por Messenger: no tiene un destinatario habilitado."
+        : "El cliente no tiene un número de WhatsApp válido.";
+    }
     if (error.isForbidden) return "Tu rol no puede enviar mensajes en esta conversación.";
     return text;
   }

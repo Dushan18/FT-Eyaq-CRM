@@ -95,21 +95,35 @@ describe("mensajes", () => {
   });
 
   it("solo muestra el estado de entrega cuando aporta (lo normal es silencioso)", () => {
-    const samanta = message({ sequence: 1, direction: "OUTBOUND", status: "DELIVERED" });
-    expect(outboundStatusView(samanta)).toBeNull();
+    const samanta = message({ sequence: 1, direction: "OUTBOUND", status: "DELIVERED", authorUserId: OTHER });
+    expect(outboundStatusView(samanta, true)).toBeNull();
     const mine = message({ sequence: 2, direction: "OUTBOUND", status: "DELIVERED", authorUserId: ME });
     expect(outboundStatusView(mine)?.text).toBe("✓✓ Entregado");
     const failed = message({ sequence: 3, direction: "OUTBOUND", status: "FAILED", errorCode: "WHATSAPP_WINDOW_CLOSED" });
-    expect(outboundStatusView(failed)).toEqual({ text: "No se envió: la ventana de 24 h estaba cerrada", tone: "error" });
+    expect(outboundStatusView(failed)).toEqual({
+      text: "No se envió: pasaron más de 24 h desde el último mensaje del cliente",
+      tone: "error",
+    });
     expect(outboundStatusView(message({ sequence: 4, direction: "OUTBOUND", status: "UNKNOWN" }))?.tone).toBe("warning");
     expect(outboundStatusView(message({ sequence: 5 }))).toBeNull();
   });
 
-  it("identifica a Samanta, a quien escribe y al responsable", () => {
-    expect(outboundAuthorLabel({ direction: "OUTBOUND", authorUserId: null }, ME, null)).toBe("Samanta · IA");
-    expect(outboundAuthorLabel({ direction: "OUTBOUND", authorUserId: ME }, ME, null)).toBe("Tú");
-    expect(outboundAuthorLabel({ direction: "OUTBOUND", authorUserId: OTHER }, ME, camila)).toBe("Camila Torres");
-    expect(outboundAuthorLabel({ direction: "OUTBOUND", authorUserId: OTHER }, ME, null)).toBe("Operador");
+  it("los códigos de Messenger tienen los mismos textos que los de WhatsApp", () => {
+    const rejected = message({ sequence: 6, direction: "OUTBOUND", status: "FAILED", errorCode: "MESSENGER_SEND_REJECTED" });
+    expect(outboundStatusView(rejected)?.text).toBe("No se envió: el canal lo rechazó");
+    // RATE_LIMITED también llega en el SENDING del reintento.
+    const retrying = message({ sequence: 7, direction: "OUTBOUND", status: "SENDING", errorCode: "MESSENGER_RATE_LIMITED" });
+    expect(outboundStatusView(retrying)?.text).toBe("Reintentando…");
+  });
+
+  it("identifica a Samanta (borrador aprobado), a quien escribe y al responsable", () => {
+    const samantaIds = new Set(["m-samanta"]);
+    expect(outboundAuthorLabel({ id: "m-samanta", direction: "OUTBOUND", authorUserId: ME }, ME, null, samantaIds)).toBe("Samanta · IA");
+    // Un saliente sin autor ya no se supone de Samanta.
+    expect(outboundAuthorLabel({ id: "m-1", direction: "OUTBOUND", authorUserId: null }, ME, null)).toBe("Equipo");
+    expect(outboundAuthorLabel({ id: "m-2", direction: "OUTBOUND", authorUserId: ME }, ME, null)).toBe("Tú");
+    expect(outboundAuthorLabel({ id: "m-3", direction: "OUTBOUND", authorUserId: OTHER }, ME, camila)).toBe("Camila Torres");
+    expect(outboundAuthorLabel({ id: "m-4", direction: "OUTBOUND", authorUserId: OTHER }, ME, null)).toBe("Equipo");
   });
 });
 
@@ -178,10 +192,35 @@ describe("cuadro de texto (regla 7: quien escribe toma el control)", () => {
   it("explica por qué no se puede escribir", () => {
     const reason = (s: ReturnType<typeof composerState>) => (s.enabled ? null : s.reason);
     expect(reason(composerState(conversation(), ME, ["OWNER"], open))).toContain("no responder");
-    expect(reason(composerState(conversation({ channel: "FACEBOOK" }), ME, ["ADMIN"], open))).toContain("Facebook");
+    expect(reason(composerState(conversation({ channel: "INSTAGRAM" }), ME, ["ADMIN"], open))).toContain("Instagram");
     const noPhone = conversation({ customer: { id: "cu-1", firstName: "Ana", lastName: null, phone: null, email: "a@b.pe" } });
     expect(reason(composerState(noPhone, ME, ["ADMIN"], open))).toContain("teléfono");
     expect(reason(composerState(conversation(), ME, ["ADMIN"], { open: false }))).toContain("24 h");
+  });
+
+  it("en Messenger se responde sin teléfono, con su propia ventana de 24 h", () => {
+    const messenger = conversation({
+      channel: "FACEBOOK",
+      customer: { id: "cu-2", firstName: "Rosa Mamani", lastName: null, phone: null, email: null },
+    });
+    expect(composerState(messenger, ME, ["OPERATOR"], open)).toMatchObject({ enabled: true });
+    const closed = composerState(messenger, ME, ["OPERATOR"], { open: false });
+    expect(closed.enabled ? null : closed.reason).toContain("Messenger");
+  });
+
+  it("en Instagram no se responde: el aviso dice que por ahora solo recibe mensajes", () => {
+    const instagram = conversation({
+      channel: "INSTAGRAM",
+      customer: { id: "cu-3", firstName: "Dushan Wqt", lastName: null, phone: null, email: null },
+    });
+    const expected = {
+      enabled: false,
+      reason: "Instagram por ahora solo recibe mensajes: todavía no se puede responder desde el CRM.",
+    };
+    expect(composerState(instagram, ME, ["ADMIN"], open)).toEqual(expected);
+    // Sin depender de la ventana estimada ni de la asignación.
+    expect(composerState(instagram, ME, ["OPERATOR"], null)).toEqual(expected);
+    expect(composerState({ ...instagram, isAssistantPaused: true, assignedUserId: ME }, ME, ["OPERATOR"], open)).toEqual(expected);
   });
 });
 
@@ -190,6 +229,22 @@ describe("errores de envío", () => {
     expect(sendErrorText(new ApiError(409, ["Ventana de WhatsApp cerrada; se requiere una plantilla aprobada"]))).toContain("24 h");
     expect(sendErrorText(new ApiError(503, ["WhatsApp no está habilitado"]))).toContain("no está habilitado");
     expect(sendErrorText(new ApiError(0, ["sin red"]))).toContain("no se duplicará");
+  });
+
+  it("distingue el canal apagado de la falta de conexión y elige el texto según el canal", () => {
+    // 503 sin code: Messenger apagado en el servidor (no es «sin conexión»).
+    expect(sendErrorText(new ApiError(503, ["Messenger no está habilitado"]), "FACEBOOK")).toBe(
+      "El envío por Messenger no está habilitado en el servidor.",
+    );
+    // 503 con BACKEND_UNAVAILABLE: el BFF no llegó a bk-crm.
+    expect(sendErrorText(new ApiError(503, ["No se pudo conectar"], "BACKEND_UNAVAILABLE"), "FACEBOOK")).toContain("no se duplicará");
+    expect(sendErrorText(new ApiError(409, ["Ventana de Messenger cerrada; el cliente debe enviar un nuevo mensaje"]), "FACEBOOK")).toContain(
+      "Messenger",
+    );
+    expect(sendErrorText(new ApiError(400, ["Conversación sin destinatario habilitado"]), "FACEBOOK")).toContain("Messenger");
+    expect(sendErrorText(new ApiError(400, ["Messenger admite hasta 2000 caracteres por respuesta"]), "FACEBOOK")).toBe(
+      "Messenger admite hasta 2000 caracteres por respuesta",
+    );
   });
 });
 

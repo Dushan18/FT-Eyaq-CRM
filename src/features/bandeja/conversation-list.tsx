@@ -4,9 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import type { ContactChannel, Conversation } from "@/lib/api/types";
 import { useSession } from "@/lib/auth/session";
 import { channelMeta, INBOX_CHANNEL_FILTERS } from "@/lib/domain/channels";
-import { customerName, messageText, previewPrefix } from "@/lib/domain/conversation";
+import { customerInitials, customerName, messageText, previewPrefix } from "@/lib/domain/conversation";
 import { formatAgoShort } from "@/lib/format/dates";
-import { cn, initials } from "@/lib/format/text";
+import { cn } from "@/lib/format/text";
 import { useNow } from "@/lib/hooks/use-now";
 import { useRestaurant } from "@/lib/restaurant";
 import { Avatar, FilterChip, Tag } from "@/components/ui/primitives";
@@ -50,7 +50,7 @@ export function ConversationList({
 
   return (
     <aside className="flex min-h-0 flex-col overflow-hidden rounded-[20px] bg-white" aria-label="Conversaciones">
-      <div className="flex flex-col gap-3 border-b border-line px-[18px] pb-3.5 pt-5">
+      <div className="flex flex-col gap-3 border-b border-line px-4.5 pb-3.5 pt-5">
         <div className="flex items-baseline justify-between">
           <h1 className="m-0 text-xl font-bold">Bandeja</h1>
           <UnreadCount />
@@ -172,7 +172,7 @@ function SearchInput({ value, onChange }: { value: string; onChange: (value: str
       maxLength={SEARCH_MAX}
       placeholder="Buscar cliente o teléfono"
       aria-label="Buscar por nombre, teléfono o correo del cliente"
-      className="h-[38px] rounded-[10px] border border-field bg-surface-2 px-3 text-[13.5px] text-ink outline-none placeholder:text-faint focus:border-brand"
+      className="h-9.5 rounded-[10px] border border-field bg-surface-2 px-3 text-[13.5px] text-ink outline-none placeholder:text-faint focus:border-brand"
     />
   );
 }
@@ -195,7 +195,7 @@ function ConversationRow({
   requests: LatestRequests;
 }) {
   const ch = channelMeta(c.channel);
-  const name = customerName(c.customer);
+  const name = customerName(c.customer, c.channel);
   const unread = c.unreadCount > 0;
 
   const last = useLastMessage(c);
@@ -222,16 +222,16 @@ function ConversationRow({
       aria-current={selected ? "true" : undefined}
       aria-label={`${name}, ${ch.label}${unread ? `, ${c.unreadCount} sin leer` : ""}`}
       className={cn(
-        "grid w-full cursor-pointer grid-cols-[40px_minmax(0,1fr)_auto] gap-2.5 border-0 border-b border-l-[3px] border-solid border-b-line-3 py-[13px] pl-3.5 pr-4 text-left",
+        "grid w-full cursor-pointer grid-cols-[40px_minmax(0,1fr)_auto] gap-2.5 border-0 border-b border-l-[3px] border-solid border-b-line-3 py-3.25 pl-3.5 pr-4 text-left",
         selected ? "border-l-brand bg-brand-soft" : "border-l-transparent bg-white hover:bg-hover-row",
       )}
     >
-      <Avatar text={initials(name)} size={40} badge={ch} />
-      <div className="flex min-w-0 flex-col gap-[3px]">
+      <Avatar text={customerInitials(c.customer)} size={40} badge={c.channel} />
+      <div className="flex min-w-0 flex-col gap-0.75">
         <div className={cn("truncate text-sm", unread ? "font-bold" : "font-semibold")}>{name}</div>
         <div className="truncate text-[12.5px] text-muted">{preview}</div>
         {tag ? (
-          <div className="mt-0.5 flex gap-[5px]">
+          <div className="mt-0.5 flex gap-1.25">
             <Tag tone={tag.tone}>{tag.label}</Tag>
           </div>
         ) : null}
@@ -241,7 +241,7 @@ function ConversationRow({
           {c.lastMessageAt ? formatAgoShort(c.lastMessageAt, now, timeZone) : ""}
         </div>
         {unread ? (
-          <div className="grid h-[19px] min-w-[19px] place-items-center rounded-full bg-brand px-[5px] text-[11px] font-bold text-white">
+          <div className="grid h-4.75 min-w-4.75 place-items-center rounded-full bg-brand px-1.25 text-[11px] font-bold text-white">
             {c.unreadCount}
           </div>
         ) : null}

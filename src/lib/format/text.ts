@@ -3,12 +3,16 @@ export function cn(...classes: Array<string | false | null | undefined>): string
   return classes.filter(Boolean).join(" ");
 }
 
-/** "María Fernández" → "MF"; "Grupo Empresarial Tauro" → "GE". */
+/**
+ * "María Fernández" → "MF"; "Grupo Empresarial Tauro" → "GE". La arroba inicial de un usuario de Instagram
+ * no cuenta: "@dushan1812" → "D".
+ */
 export function initials(name: string | null | undefined): string {
   if (!name) return "?";
   const words = name
     .trim()
     .split(/\s+/)
+    .map((w) => w.replace(/^@+/, ""))
     .filter((w) => /[\p{L}\p{N}]/u.test(w));
   if (words.length === 0) return "?";
   return words

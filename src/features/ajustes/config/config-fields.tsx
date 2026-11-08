@@ -45,14 +45,14 @@ function LogoField({
   return (
     <div className="flex items-center gap-4">
       {preview && !broken ? (
-        <div className="grid size-[72px] shrink-0 place-items-center overflow-hidden rounded-2xl border border-card bg-white">
+        <div className="grid size-18 shrink-0 place-items-center overflow-hidden rounded-2xl border border-card bg-white">
           {/* eslint-disable-next-line @next/next/no-img-element -- URL externa arbitraria: next/image exige dominios configurados. */}
           <img src={preview} alt="Logotipo del restaurante" className="size-full object-contain" onError={() => setBrokenUrl(preview)} />
         </div>
       ) : (
         <div
           aria-hidden="true"
-          className="grid size-[72px] shrink-0 place-items-center rounded-2xl border border-dashed border-[#c9d0dc] font-mono text-[10px] text-subtle"
+          className="grid size-18 shrink-0 place-items-center rounded-2xl border border-dashed border-[#c9d0dc] font-mono text-[10px] text-subtle"
           style={{ background: "repeating-linear-gradient(45deg,#f6f7fa 0 6px,#eef0f4 6px 12px)" }}
         >
           logo
@@ -99,7 +99,7 @@ function LanguageChips({
             <label
               key={option.value}
               className={cn(
-                "inline-flex h-[30px] items-center whitespace-nowrap rounded-full border px-3 text-[12.5px] font-semibold transition-colors has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-brand",
+                "inline-flex h-7.5 items-center whitespace-nowrap rounded-full border px-3 text-[12.5px] font-semibold transition-colors has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-brand",
                 checked ? "border-brand bg-brand text-white" : "border-field bg-white text-slate",
                 disabled ? "cursor-not-allowed opacity-60" : cn("cursor-pointer", !checked && "hover:bg-surface"),
               )}

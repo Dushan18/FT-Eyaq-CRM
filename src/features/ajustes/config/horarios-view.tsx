@@ -195,7 +195,7 @@ function TimeInput({
       disabled={disabled}
       onChange={(e) => onChange(e.target.value)}
       className={cn(
-        "h-[34px] w-[90px] rounded-[10px] border border-field bg-white px-3 text-[13.5px] text-ink outline-none transition-colors focus:border-brand disabled:cursor-not-allowed disabled:bg-surface disabled:text-muted [&::-webkit-calendar-picker-indicator]:hidden",
+        "h-8.5 w-22.5 rounded-[10px] border border-field bg-white px-3 text-[13.5px] text-ink outline-none transition-colors focus:border-brand disabled:cursor-not-allowed disabled:bg-surface disabled:text-muted [&::-webkit-calendar-picker-indicator]:hidden",
         invalid && "border-[#e0a3a3]",
       )}
     />

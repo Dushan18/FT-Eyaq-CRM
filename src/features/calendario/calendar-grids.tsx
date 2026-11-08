@@ -16,6 +16,8 @@ import { dayTitle, toDayKey, type CivilDate, type MonthCell } from "./calendar-u
 
 interface ReservationGridProps {
   byDay: ReadonlyMap<string, Reservation[]>;
+  /** Se agrega bajo «Sin reservas…»: explica cómo se registran (y el botón para ADMIN). */
+  emptyHint?: ReactNode;
   selectedId: string | null;
   timeZone: string;
   /** Se muestran los datos del periodo anterior mientras llegan los del nuevo (keepPreviousData). */
@@ -30,10 +32,11 @@ function cardTone(selected: boolean, prepared: boolean): string {
   return "border-bubble bg-white";
 }
 
-function EmptyBox({ children, className }: { children: ReactNode; className?: string }) {
+function EmptyBox({ children, hint, className }: { children: ReactNode; hint?: ReactNode; className?: string }) {
   return (
-    <div className={cn("rounded-xl border border-dashed border-dashed-line p-[30px] text-center text-[13.5px] text-subtle", className)}>
-      {children}
+    <div className={cn("rounded-xl border border-dashed border-dashed-line p-7.5 text-center text-[13.5px] text-subtle", className)}>
+      <p className="m-0">{children}</p>
+      {hint}
     </div>
   );
 }
@@ -46,6 +49,7 @@ export function WeekGrid({
   todayKey,
   onOpenDay,
   byDay,
+  emptyHint,
   selectedId,
   timeZone,
   updating,
@@ -59,10 +63,12 @@ export function WeekGrid({
 }) {
   const total = days.reduce((sum, d) => sum + (byDay.get(toDayKey(d))?.length ?? 0), 0);
 
+  // Siete columnas de al menos ~94 px: en pantallas estrechas la semana se desplaza en horizontal.
   return (
+    <div className="relative -mx-1 flex-1 overflow-x-auto px-1 pb-1">
     <div
       aria-busy={updating || undefined}
-      className={cn("grid flex-1 grid-cols-7 content-start gap-2 leading-[normal] transition-opacity", updating && "opacity-60")}
+      className={cn("grid min-w-175 grid-cols-7 content-start gap-2 leading-[normal] transition-opacity", updating && "opacity-60")}
     >
       {days.map((date, i) => {
         const key = toDayKey(date);
@@ -90,7 +96,12 @@ export function WeekGrid({
           </div>
         );
       })}
-      {total === 0 && !updating ? <EmptyBox className="col-span-7">Sin reservas aceptadas esta semana.</EmptyBox> : null}
+      {total === 0 && !updating ? (
+        <EmptyBox className="col-span-7" hint={emptyHint}>
+          Sin reservas esta semana.
+        </EmptyBox>
+      ) : null}
+    </div>
     </div>
   );
 }
@@ -113,13 +124,13 @@ function WeekCard({
       aria-pressed={selected}
       onClick={() => onSelect(r.id)}
       className={cn(
-        "flex min-w-0 cursor-pointer flex-col gap-0.5 rounded-[10px] border-[1.5px] px-[9px] py-2 text-left transition-colors hover:border-brand",
+        "flex min-w-0 cursor-pointer flex-col gap-0.5 rounded-[10px] border-[1.5px] px-2.25 py-2 text-left transition-colors hover:border-brand",
         cardTone(selected, prepared),
       )}
     >
       <span className="flex items-center justify-between gap-1">
         <span className="text-[12.5px] font-bold">{formatTime(r.reservationAt, timeZone)}</span>
-        {prepared ? <span role="img" aria-label="Preparada" title="Preparada" className="size-2 shrink-0 rounded-full bg-[#1f9d55]" /> : null}
+        {prepared ? <span role="img" aria-label="Preparada" title="Preparada" className="size-2 shrink-0 rounded-full bg-whatsapp" /> : null}
       </span>
       <span className="truncate text-[12.5px] font-semibold">{customerName(r.customer)}</span>
       <span className="truncate text-[11.5px] text-muted">
@@ -131,7 +142,15 @@ function WeekCard({
 
 // ---------------------------------------------------------------- día
 
-export function DayList({ date, byDay, selectedId, timeZone, updating, onSelect }: ReservationGridProps & { date: CivilDate }) {
+export function DayList({
+  date,
+  byDay,
+  emptyHint,
+  selectedId,
+  timeZone,
+  updating,
+  onSelect,
+}: ReservationGridProps & { date: CivilDate }) {
   const items = byDay.get(toDayKey(date)) ?? [];
 
   return (
@@ -141,7 +160,7 @@ export function DayList({ date, byDay, selectedId, timeZone, updating, onSelect 
         updating ? (
           <LoadingState label="Cargando reservas…" />
         ) : (
-          <EmptyBox>Sin reservas aceptadas este día.</EmptyBox>
+          <EmptyBox hint={emptyHint}>Sin reservas este día.</EmptyBox>
         )
       ) : (
         <ul
@@ -159,18 +178,19 @@ export function DayList({ date, byDay, selectedId, timeZone, updating, onSelect 
                   aria-pressed={selected}
                   onClick={() => onSelect(r.id)}
                   className={cn(
-                    "grid w-full cursor-pointer grid-cols-[70px_minmax(0,1fr)_120px_160px_minmax(0,1fr)] items-center gap-3.5 rounded-xl border-[1.5px] px-4 py-3.5 text-left text-[13.5px] transition-colors hover:border-brand",
+                    // Desde md, una fila con cinco columnas; más estrecho, la hora a la izquierda y el resto apilado.
+                    "grid w-full cursor-pointer grid-cols-[56px_minmax(0,1fr)] items-center gap-x-3.5 gap-y-1 rounded-xl border-[1.5px] px-4 py-3.5 text-left text-[13.5px] transition-colors hover:border-brand md:grid-cols-[70px_minmax(0,1fr)_120px_160px_minmax(0,1fr)] md:gap-3.5",
                     cardTone(selected, prepared),
                   )}
                 >
-                  <span className="text-[15px] font-bold">{formatTime(r.reservationAt, timeZone)}</span>
+                  <span className="self-start text-[15px] font-bold md:self-center">{formatTime(r.reservationAt, timeZone)}</span>
                   <span className="min-w-0 wrap-break-word font-semibold">
                     {customerName(r.customer)}
                     {prepared ? <span className="sr-only"> (preparada)</span> : null}
                   </span>
-                  <span>{plural(r.numberOfPeople, "persona")}</span>
-                  <span className="min-w-0 wrap-break-word text-slate">{itemName(r.commercialItem)}</span>
-                  <span className="min-w-0 wrap-break-word text-muted">{orDash(r.notes)}</span>
+                  <span className="max-md:col-start-2">{plural(r.numberOfPeople, "persona")}</span>
+                  <span className="min-w-0 wrap-break-word text-slate max-md:col-start-2">{itemName(r.commercialItem)}</span>
+                  <span className="min-w-0 wrap-break-word text-muted max-md:col-start-2">{orDash(r.notes)}</span>
                 </button>
               </li>
             );
@@ -186,12 +206,14 @@ export function DayList({ date, byDay, selectedId, timeZone, updating, onSelect 
 export function MonthGrid({
   cells,
   byDay,
+  emptyHint,
   todayKey,
   updating,
   onOpenDay,
 }: {
   cells: MonthCell[];
   byDay: ReadonlyMap<string, Reservation[]>;
+  emptyHint?: ReactNode;
   todayKey: string;
   updating: boolean;
   onOpenDay: (date: CivilDate) => void;
@@ -203,7 +225,7 @@ export function MonthGrid({
     <>
       <div
         aria-busy={updating || undefined}
-        className={cn("grid grid-cols-7 gap-1.5 leading-[normal] transition-opacity", updating && "opacity-60")}
+        className={cn("grid grid-cols-7 gap-1 leading-[normal] transition-opacity sm:gap-1.5", updating && "opacity-60")}
       >
         {WEEK_DAYS_SHORT.map((label) => (
           <div key={label} aria-hidden="true" className="py-1 text-center text-[11px] font-bold tracking-[.06em] text-subtle">
@@ -222,22 +244,24 @@ export function MonthGrid({
               aria-label={cell.inMonth ? `${title}: ${count > 0 ? plural(count, "reserva") : "sin reservas"}` : title}
               aria-current={isToday ? "date" : undefined}
               className={cn(
-                "flex h-[78px] cursor-pointer flex-col items-start justify-between rounded-xl border px-2.5 py-2 text-left transition-colors hover:border-brand",
+                "flex h-19.5 min-w-0 cursor-pointer flex-col items-start justify-between rounded-xl border px-1.5 py-2 text-left transition-colors hover:border-brand sm:px-2.5",
                 isToday ? "border-brand" : "border-card",
                 cell.inMonth ? "bg-white" : "bg-surface opacity-35",
               )}
             >
               <span className={cn("text-[13.5px] font-bold", isToday ? "text-brand" : "text-ink")}>{cell.date.day}</span>
+              {/* El nombre del botón ya dice «N reservas»; en celdas estrechas basta el número. */}
               {count > 0 ? (
-                <span className="rounded-[6px] bg-brand-bubble px-[7px] py-0.5 text-[11.5px] font-semibold text-brand">
-                  {plural(count, "reserva")}
+                <span aria-hidden="true" className="max-w-full rounded-md bg-brand-bubble px-1.75 py-0.5 text-[11.5px] font-semibold text-brand">
+                  <span className="sm:hidden">{count}</span>
+                  <span className="max-sm:hidden">{plural(count, "reserva")}</span>
                 </span>
               ) : null}
             </button>
           );
         })}
       </div>
-      {total === 0 && !updating ? <EmptyBox>Sin reservas aceptadas este mes.</EmptyBox> : null}
+      {total === 0 && !updating ? <EmptyBox hint={emptyHint}>Sin reservas este mes.</EmptyBox> : null}
     </>
   );
 }

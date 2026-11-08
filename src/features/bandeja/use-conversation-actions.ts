@@ -2,7 +2,9 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api/client";
+import { isConnectionError } from "@/lib/api/errors";
 import { conversationsApi } from "@/lib/api/endpoints";
+import { qk } from "@/lib/api/query-keys";
 import type { Conversation } from "@/lib/api/types";
 import { storeConversation, storeSentMessage, useInvalidateInbox } from "./use-inbox";
 
@@ -25,9 +27,13 @@ export class SendFailedError extends Error {
   }
 }
 
+/**
+ * Texto de una acción fallida. Solo los errores de conexión se resumen; un 503 sin `code` (algo apagado en
+ * el servidor, como Samanta o un canal) se muestra con el texto del backend.
+ */
 export function actionErrorText(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.isUnavailable) return "No se pudo conectar con el servidor.";
+    if (isConnectionError(error)) return "No se pudo conectar con el servidor.";
     return error.messages.join(" ");
   }
   return error instanceof Error ? error.message : "Ocurrió un error inesperado.";
@@ -104,6 +110,10 @@ export function useConversationActions(conversation: Conversation | null, meId: 
       }
       return { warning: null };
     },
-    onSettled: () => invalidate(conversation?.id),
+    onSettled: () => {
+      invalidate(conversation?.id);
+      // Enviar o pausar deja desactualizados los borradores pendientes de Samanta.
+      if (conversation) void queryClient.invalidateQueries({ queryKey: qk.assistantDrafts(conversation.id) });
+    },
   });
 }

@@ -58,6 +58,8 @@ export interface TimelineStep {
 export function requestTimeline(status: ReservationRequestStatus): TimelineStep[] {
   const group = REQUEST_STATUS[status].group;
   const stage = group === "negociando" ? 0 : group === "esperando" ? 1 : 2;
+  // Una solicitud cancelada nunca se envió al dueño (bk-crm solo cancela antes de enviar): ese paso no se marca.
+  const skipped = group === "cancelada" ? 1 : -1;
   const final: [string, string, string] =
     group === "aceptada"
       ? ["Aceptada por el dueño", "Registrada en el calendario", "#1f9d55"]
@@ -72,7 +74,7 @@ export function requestTimeline(status: ReservationRequestStatus): TimelineStep[
     final,
   ];
   return defs.map(([label, sub, color], i) => {
-    const done = i < stage || (i === 2 && stage === 2);
+    const done = i !== skipped && (i < stage || (i === 2 && stage === 2));
     const current = i === stage && stage < 2;
     return {
       label,
@@ -89,7 +91,8 @@ export function requestTimeline(status: ReservationRequestStatus): TimelineStep[
 
 /**
  * "Marcar como preparada" (mockup) se representa con el estado UPCOMING del backend, el único estado
- * manual previo a la llegada. Es irreversible: el backend no permite UPCOMING → CONFIRMED.
+ * manual previo a la llegada. No hay transición directa UPCOMING → CONFIRMED (409), pero al reprogramar
+ * la reserva pasa a RESCHEDULED y desde ahí puede volver a CONFIRMED.
  * Pendiente de confirmar con el dueño del producto (ver README, "Decisiones pendientes").
  */
 export const PREPARED_STATUS: ReservationStatus = "UPCOMING";

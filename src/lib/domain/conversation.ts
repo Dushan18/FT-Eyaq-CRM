@@ -1,11 +1,35 @@
-import type { CommercialItemSummary, Conversation, CustomerSummary, Message, OutboundMessageStatus } from "@/lib/api/types";
-import { personName } from "@/lib/format/text";
+import type { CommercialItemSummary, ContactChannel, Conversation, CustomerSummary, Message, OutboundMessageStatus } from "@/lib/api/types";
+import { initials, personName } from "@/lib/format/text";
 
-/** Nombre visible de un cliente: nombre y apellido, o teléfono, o correo. */
-export function customerName(c: Pick<CustomerSummary, "firstName" | "lastName" | "phone" | "email"> | null | undefined): string {
+/** Respaldo de los canales cuyos clientes llegan sin teléfono ni correo (identidades del proveedor). */
+const UNNAMED_BY_CHANNEL: Partial<Record<ContactChannel, string>> = {
+  FACEBOOK: "Cliente de Messenger",
+  INSTAGRAM: "Cliente de Instagram",
+};
+
+/**
+ * Nombre visible de un cliente: nombre y apellido, o teléfono, o correo. Si no hay nada, un respaldo según
+ * el canal. Los clientes de Messenger (FACEBOOK) y de Instagram no tienen teléfono ni correo, y bk-crm llena
+ * `firstName` con el nombre del perfil cuando Meta lo da: puede tardar unos segundos tras el primer mensaje
+ * o faltar si Meta falla. En Instagram, sin nombre en el perfil, `firstName` es el usuario con arroba
+ * («@dushan1812») y se muestra tal cual.
+ */
+export function customerName(
+  c: Pick<CustomerSummary, "firstName" | "lastName" | "phone" | "email"> | null | undefined,
+  channel?: ContactChannel | null,
+): string {
   if (!c) return "Cliente";
   const name = personName(c.firstName, c.lastName, "");
-  return name || c.phone || c.email || "Cliente sin nombre";
+  return name || c.phone || c.email || (channel ? UNNAMED_BY_CHANNEL[channel] : undefined) || "Cliente sin nombre";
+}
+
+/**
+ * Iniciales del avatar, solo de un nombre real. Sin nombre devuelve «?», como la lista de Clientes: las
+ * iniciales del respaldo («Cliente de Messenger» → «CD») o de un teléfono («+») no dicen nada.
+ */
+export function customerInitials(c: Pick<CustomerSummary, "firstName" | "lastName"> | null | undefined): string {
+  const name = c ? personName(c.firstName, c.lastName, "") : "";
+  return name ? initials(name) : "?";
 }
 
 /** Nombre visible de un servicio del catálogo. */
@@ -38,10 +62,14 @@ export const MODE_META: Record<ConversationMode, { label: string; bg: string; fg
 
 export type MessageAuthor = "cliente" | "samanta" | "operador";
 
-/** INBOUND = cliente; OUTBOUND sin autor = automático (Samanta); OUTBOUND con autor = operador. */
-export function messageAuthor(m: Pick<Message, "direction" | "authorUserId">): MessageAuthor {
+/**
+ * INBOUND = cliente. OUTBOUND = equipo, salvo que haya salido de un borrador de Samanta aprobado:
+ * en bk-crm todo saliente tiene autor (quien lo envió o quien aprobó el borrador), así que la única forma
+ * de reconocer a Samanta es cruzar el id con `outboundMessageId` de los borradores APPROVED (`samantaIds`).
+ */
+export function messageAuthor(m: Pick<Message, "id" | "direction">, samantaIds?: ReadonlySet<string>): MessageAuthor {
   if (m.direction === "INBOUND") return "cliente";
-  return m.authorUserId ? "operador" : "samanta";
+  return samantaIds?.has(m.id) ? "samanta" : "operador";
 }
 
 /** Texto visible del mensaje; los adjuntos solo traen metadatos (no hay descarga en el backend). */
@@ -57,12 +85,13 @@ export function messageText(m: Pick<Message, "type" | "content" | "attachments">
   return label ?? m.content ?? "";
 }
 
-/** Prefijo de la vista previa en la lista ("Samanta: ", "Tú: "). */
+/**
+ * Prefijo de la vista previa en la lista ("Tú: ", "Equipo: "). La lista no consulta los borradores de cada
+ * conversación, así que un mensaje aprobado desde Samanta se muestra como del equipo.
+ */
 export function previewPrefix(m: Pick<Message, "direction" | "authorUserId">, currentUserId: string | null): string {
-  const author = messageAuthor(m);
-  if (author === "samanta") return "Samanta: ";
-  if (author === "operador") return m.authorUserId === currentUserId ? "Tú: " : "Operador: ";
-  return "";
+  if (m.direction === "INBOUND") return "";
+  return m.authorUserId && m.authorUserId === currentUserId ? "Tú: " : "Equipo: ";
 }
 
 export const OUTBOUND_STATUS_LABEL: Record<OutboundMessageStatus, string> = {

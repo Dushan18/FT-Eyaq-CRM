@@ -20,6 +20,11 @@ export interface ServerEnv {
   mockPassword: string;
   /** Habilita el simulador de canales (solo modo mock). */
   simulatorEnabled: boolean;
+  /**
+   * Proxies inversos de confianza delante de Next.js (0 = ninguno). Con 1 o más se toma la IP del
+   * navegador de `X-Forwarded-For` para limitar los intentos de sesión por IP.
+   */
+  trustProxyHops: number;
 }
 
 function readBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -65,6 +70,13 @@ export function getServerEnv(): ServerEnv {
     cookieSecure: readBoolean(process.env.CRM_COOKIE_SECURE, isProduction),
     mockPassword: process.env.CRM_MOCK_PASSWORD?.trim() || "demo1234",
     simulatorEnabled: mode === "mock" && readBoolean(process.env.CRM_ENABLE_SIMULATOR, true),
+    trustProxyHops: readInt(process.env.CRM_TRUST_PROXY, 0, 0, 10),
   };
+
+  if (isProduction && mode === "live" && cached.trustProxyHops === 0) {
+    console.warn(
+      "CRM_TRUST_PROXY no está definido: no se limitan los intentos de inicio de sesión por IP. Defínelo con el número de proxies inversos delante de Next.js (ver README).",
+    );
+  }
   return cached;
 }

@@ -128,7 +128,7 @@ export function InvitarUsuarioForm({ onCancel, onCreated }: { onCancel: () => vo
       {formError ? <InlineNotice tone="error">No se pudo crear el usuario. {formError}</InlineNotice> : null}
 
       <div className="flex items-end justify-between gap-4">
-        <p className="m-0 max-w-[440px] text-xs leading-[1.45] text-subtle">
+        <p className="m-0 max-w-110 text-xs leading-[1.45] text-subtle">
           El backend aún no envía invitaciones por correo: comparte la contraseña temporal por un canal seguro y pide que
           la cambien con «¿Olvidaste tu contraseña?».
         </p>

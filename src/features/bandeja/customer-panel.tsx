@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { customersApi, requestsApi, reservationsApi } from "@/lib/api/endpoints";
 import { qk } from "@/lib/api/query-keys";
 import type { Conversation, Paginated, Reservation, ReservationRequest } from "@/lib/api/types";
@@ -11,8 +11,11 @@ import { itemName } from "@/lib/domain/conversation";
 import { CUSTOMER_STATUS, requestStatusView, requestTimeline, type TimelineStep } from "@/lib/domain/statuses";
 import { formatDate, formatDayTime } from "@/lib/format/dates";
 import { plural } from "@/lib/format/text";
+import { useSession } from "@/lib/auth/session";
 import { useRestaurant } from "@/lib/restaurant";
-import { DetailList, Panel, Pill, SectionLabel } from "@/components/ui/primitives";
+import { NewRequestDialog } from "@/features/solicitudes/request-form";
+import { Dialog } from "@/components/ui/dialog";
+import { Button, DetailList, Panel, Pill, SectionLabel } from "@/components/ui/primitives";
 import { ErrorState, LoadingState } from "@/components/ui/state";
 import { buildHistory } from "./inbox-utils";
 
@@ -21,9 +24,9 @@ const HISTORY_REQUESTS = 20;
 /** Panel derecho: solicitud vigente con su línea de tiempo, datos del cliente e historial. */
 export function CustomerPanel({ conversation }: { conversation: Conversation | null }) {
   return (
-    <Panel as="aside" className="flex min-h-0 flex-col gap-[22px] overflow-y-auto p-5" aria-label="Datos del cliente">
+    <Panel as="aside" className="flex min-h-0 flex-col gap-5.5 overflow-y-auto p-5" aria-label="Datos del cliente">
       {conversation ? (
-        <CustomerDetails key={conversation.customerId} customerId={conversation.customerId} />
+        <CustomerDetails key={conversation.customerId} conversation={conversation} />
       ) : (
         <p className="m-0 text-[13px] text-subtle">Selecciona una conversación para ver la solicitud y los datos del cliente.</p>
       )}
@@ -31,7 +34,31 @@ export function CustomerPanel({ conversation }: { conversation: Conversation | n
   );
 }
 
-function CustomerDetails({ customerId }: { customerId: string }) {
+/** La misma ficha en un panel lateral, cuando la pantalla no tiene sitio para la tercera columna. */
+export function CustomerSheet({
+  conversation,
+  open,
+  onClose,
+}: {
+  conversation: Conversation | null;
+  open: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <Dialog open={open && conversation !== null} onClose={onClose} title="Datos del cliente" placement="right">
+      {conversation ? (
+        <div className="flex flex-col gap-5.5">
+          <CustomerDetails key={conversation.customerId} conversation={conversation} />
+        </div>
+      ) : null}
+    </Dialog>
+  );
+}
+
+function CustomerDetails({ conversation }: { conversation: Conversation }) {
+  const customerId = conversation.customerId;
+  const session = useSession();
+  const [creating, setCreating] = useState(false);
   const requests = useQuery({
     queryKey: qk.requests({ customerId, limit: HISTORY_REQUESTS }),
     queryFn: () => requestsApi.list({ customerId, limit: HISTORY_REQUESTS }),
@@ -41,7 +68,16 @@ function CustomerDetails({ customerId }: { customerId: string }) {
 
   return (
     <>
-      <Section title="SOLICITUD DE RESERVA">
+      <Section
+        title="SOLICITUD DE RESERVA"
+        aside={
+          session.can("request.edit") ? (
+            <Button variant="link" className="h-7 px-2.5 text-xs" onClick={() => setCreating(true)}>
+              Nueva solicitud
+            </Button>
+          ) : null
+        }
+      >
         {requests.isLoading ? (
           <LoadingState className="py-4" />
         ) : requests.isError && !requests.data ? (
@@ -50,12 +86,19 @@ function CustomerDetails({ customerId }: { customerId: string }) {
           <RequestCard request={latest} />
         ) : (
           <div className="rounded-[14px] border border-dashed border-dashed-line p-4 text-[13px] leading-normal text-muted">
-            Aún no hay solicitud. Samanta la crea cuando el cliente confirma fecha, hora y personas.
+            Aún no hay solicitud para este cliente. Cuando confirme fecha, hora y personas, regístrala desde el CRM.
           </div>
         )}
       </Section>
       <CustomerSection customerId={customerId} />
       <HistorySection customerId={customerId} requests={requests} currentRequestId={latest?.id ?? null} />
+      {/* Mismo alta que en Solicitudes, con el cliente y el canal de esta conversación. Invalida qk.requestsAll. */}
+      <NewRequestDialog
+        open={creating}
+        onClose={() => setCreating(false)}
+        initialCustomer={conversation.customer}
+        initialChannel={conversation.channel}
+      />
     </>
   );
 }
@@ -111,7 +154,7 @@ function Timeline({ steps }: { steps: TimelineStep[] }) {
         return (
           <li key={s.label} className="grid grid-cols-[18px_1fr] gap-2.5">
             <div className="flex flex-col items-center" aria-hidden="true">
-              <div className="mt-[3px] size-3 rounded-full border-2 border-solid" style={{ background: s.dot, borderColor: s.ring }} />
+              <div className="mt-0.75 size-3 rounded-full border-2 border-solid" style={{ background: s.dot, borderColor: s.ring }} />
               {s.line ? <div className="min-h-4 w-0.5 flex-1 bg-bubble" /> : null}
             </div>
             <div className="pb-2.5">

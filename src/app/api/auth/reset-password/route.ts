@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { checkAuthAttempt } from "@/lib/server/auth-limits";
 import { backendFetch, BackendUnavailableError } from "@/lib/server/backend";
 import { backendUnavailable, jsonError } from "@/lib/server/session";
 
@@ -10,6 +11,9 @@ const Schema = z.object({
 
 /** Restablece la contraseña con el token del correo. El backend cierra todas las sesiones del usuario. */
 export async function POST(request: NextRequest) {
+  const attempt = checkAuthAttempt(request, "reset-password");
+  if (attempt.blocked) return attempt.blocked;
+
   const parsed = Schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return jsonError(400, "El enlace no es válido o la contraseña no cumple el largo (8 a 72 caracteres).");
@@ -19,7 +23,7 @@ export async function POST(request: NextRequest) {
     const res = await backendFetch({
       method: "POST",
       path: "/auth/reset-password",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...attempt.forwardHeaders },
       body: JSON.stringify(parsed.data),
     });
     if (res.status === 429) {

@@ -15,7 +15,10 @@ import type {
   ReservationStatus,
   RestaurantConfig,
   RoleCode,
+  SamantaDraft,
 } from "@/lib/api/types";
+import { RESERVED_IDEMPOTENCY_PREFIX } from "@/lib/api/types";
+import { approvedDraft, knowledgeHash } from "./samanta";
 import { iso, uuid, type MockConversation, type MockCustomer, type MockRequest, type MockReservation, type MockStore, type MockUser } from "./store";
 
 export const MOCK_TIME_ZONE = "America/Lima";
@@ -190,8 +193,11 @@ export function buildSeed(now: number = Date.now()): MockStore {
     firstContactAt: number,
     lastContactAt: number,
     interests: Array<{ itemId: string; at: number }> = [],
+    /** Identidad de Messenger (cliente creado por el webhook): PSID interno. */
+    messengerPsid: string | null = null,
   ): MockCustomer => {
     const c: MockCustomer = {
+      messengerPsid,
       id: uuid(),
       firstName,
       lastName,
@@ -221,9 +227,11 @@ export function buildSeed(now: number = Date.now()): MockStore {
     { itemId: itCena.id, at: now - 5 * MIN },
     { itemId: itTorta.id, at: now - 3 * MIN },
   ]);
-  const carlos = customer("Carlos", "Ibáñez", "+51 915 220 187", null, "FACEBOOK", "IN_CONVERSATION", daysAgoAt(now, 1, "10:00"), now - 14 * MIN, [
+  // Messenger, como en bk-crm: el webhook guarda el nombre del perfil entero en firstName y no trae
+  // teléfono ni correo. Paola es una identidad de Messenger a la que el equipo añadió contacto a mano.
+  const carlos = customer("Carlos Ibáñez", null, null, null, "FACEBOOK", "IN_CONVERSATION", daysAgoAt(now, 1, "10:00"), now - 14 * MIN, [
     { itemId: itCena.id, at: now - 14 * MIN },
-  ]);
+  ], "7712049386512230");
   const andrea = customer("Andrea", "Salazar", "+51 900 918 552", "andrea.s@correo.pe", "INSTAGRAM", "CONFIRMED", now - 42 * DAY, now - 60 * MIN, [
     { itemId: itAlmuerzo.id, at: now - 80 * MIN },
   ]);
@@ -241,7 +249,7 @@ export function buildSeed(now: number = Date.now()): MockStore {
   ]);
   const paola = customer("Paola", "Duarte", "+51 904 771 229", "paoduarte@correo.pe", "FACEBOOK", "CONFIRMED", now - 9 * DAY, daysAgoAt(now, 2, "09:25"), [
     { itemId: itCena.id, at: daysAgoAt(now, 2, "09:10") },
-  ]);
+  ], "6604918273340915");
   const camilaV = customer("Camila", "Vargas", "+51 911 883 004", null, "WHATSAPP", "REJECTED", now - 20 * DAY, now - 4 * DAY, [
     { itemId: itCena.id, at: now - 4 * DAY },
   ]);
@@ -256,6 +264,8 @@ export function buildSeed(now: number = Date.now()): MockStore {
   ]);
   const valentina = customer("Valentina", "Ríos", "+51 905 600 318", "vrios@correo.pe", "FACEBOOK", "CONFIRMED", now - 15 * DAY, now - 7 * DAY);
   const sinNombre = customer(null, null, "+51912345678", null, "WHATSAPP", "NEW", now - 40 * MIN, now - 40 * MIN);
+  // Messenger sin nombre de perfil: ni nombre, ni teléfono, ni correo.
+  const messengerSinNombre = customer(null, null, null, null, "FACEBOOK", "NEW", now - 25 * MIN, now - 25 * MIN, [], "5893120476618842");
 
   const filler = [
     customer("Familia", "Gómez", "+51 902 110 455", null, "WHATSAPP", "RECURRENT", now - 300 * DAY, now - 9 * DAY),
@@ -396,7 +406,16 @@ export function buildSeed(now: number = Date.now()): MockStore {
   // ---------------------------------------------------------------- conversaciones y mensajes
   const conversations: MockConversation[] = [];
   const messages: Message[] = [];
+  const drafts: SamantaDraft[] = [];
+  const idempotency: MockStore["idempotency"] = new Map();
+  const knowledge = knowledgeHash({ config, categories, items });
 
+  /**
+   * c = cliente, s = Samanta, a = equipo (autor opcional; por defecto, Camila).
+   * Como en bk-crm, todo OUTBOUND tiene autor. Samanta v1 solo redacta en WhatsApp: su mensaje sale de un
+   * borrador APPROVED por el responsable de la conversación (o el ADMIN si no tiene) y lleva a esa persona
+   * como autora. En los demás canales, las líneas «s» son respuestas del equipo.
+   */
   type Line = ["c" | "s" | "a", string, number, ...([string] | [])];
   const conversation = (
     c: MockCustomer,
@@ -416,11 +435,20 @@ export function buildSeed(now: number = Date.now()): MockStore {
     };
     const inboundIdx = lines.map((l, i) => (l[0] === "c" ? i : -1)).filter((i) => i >= 0);
     const unreadFrom = inboundIdx.length - (opts.unread ?? 0);
+    const own: Message[] = [];
     lines.forEach(([kind, text, at, authorId], index) => {
       const inbound = kind === "c";
       const inboundOrder = inboundIdx.indexOf(index);
       const unread = inbound && inboundOrder >= unreadFrom;
-      messages.push({
+      const bySamanta = kind === "s" && channel === "WHATSAPP";
+      const authorUserId = inbound
+        ? null
+        : kind === "a"
+          ? (authorId ?? operator.id)
+          : bySamanta
+            ? (opts.assignee?.id ?? admin.id)
+            : (opts.assignee?.id ?? operator.id);
+      const message: Message = {
         id: uuid(),
         conversationId: conv.id,
         channel,
@@ -430,7 +458,7 @@ export function buildSeed(now: number = Date.now()): MockStore {
         status: inbound ? "PROCESSED" : "DELIVERED",
         type: "TEXT",
         content: text,
-        authorUserId: kind === "a" ? (authorId ?? operator.id) : null,
+        authorUserId,
         occurredAt: inbound ? iso(at - 2000) : null,
         receivedAt: inbound ? iso(at) : null,
         processedAt: inbound ? iso(at + 1000) : null,
@@ -443,7 +471,23 @@ export function buildSeed(now: number = Date.now()): MockStore {
         createdAt: iso(at),
         updatedAt: iso(at),
         attachments: [],
-      });
+      };
+      messages.push(message);
+      const source = [...own].reverse().find((m) => m.direction === "INBOUND");
+      own.push(message);
+      if (bySamanta && source) {
+        const draft = approvedDraft({
+          source,
+          outbound: message,
+          reviewerId: authorUserId!,
+          businessName: config.businessName,
+          knowledgeHash: knowledge,
+          requestedAt: at - 15_000,
+          approvedAt: at,
+        });
+        drafts.push(draft);
+        idempotency.set(`${conv.id}:${RESERVED_IDEMPOTENCY_PREFIX}${draft.id}`, { messageId: message.id, authorUserId: authorUserId!, content: text });
+      }
     });
     conv.lastMessageAt = iso(lines[lines.length - 1]![2]);
     conversations.push(conv);
@@ -504,6 +548,8 @@ export function buildSeed(now: number = Date.now()): MockStore {
     ["c", "Confirmado para el jueves, gracias", daysAgoAt(now, 2, "09:25")],
   ]);
 
+  conversation(messengerSinNombre, "FACEBOOK", [["c", "Hola, ¿tienen estacionamiento cerca?", now - 25 * MIN]], { unread: 1 });
+
   return {
     users,
     sessions: [],
@@ -515,7 +561,8 @@ export function buildSeed(now: number = Date.now()): MockStore {
     reservations,
     conversations,
     messages,
-    idempotency: new Map(),
+    drafts,
+    idempotency,
     sequences: { request: reqSeq, reservation: resSeq },
   };
 }

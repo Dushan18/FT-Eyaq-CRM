@@ -1,6 +1,8 @@
 import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from "react";
+import type { ContactChannel } from "@/lib/api/types";
 import type { Tone } from "@/lib/domain/tones";
 import { cn } from "@/lib/format/text";
+import { ChannelDot } from "./channel-icon";
 
 /** Tarjeta blanca principal (radio 20 px). */
 export function Panel({
@@ -14,7 +16,7 @@ export function Panel({
   children: ReactNode;
 } & React.HTMLAttributes<HTMLElement>) {
   return (
-    <Tag className={cn("min-w-0 rounded-[20px] bg-white", className)} {...rest}>
+    <Tag className={cn("relative min-w-0 rounded-[20px] bg-white", className)} {...rest}>
       {children}
     </Tag>
   );
@@ -32,7 +34,7 @@ export function Pill({ tone, children, className }: { tone: Tone; children: Reac
   return (
     <span
       className={cn(
-        "inline-flex items-center justify-self-start whitespace-nowrap rounded-full px-[9px] py-[3px] text-[11.5px] font-bold",
+        "inline-flex items-center justify-self-start whitespace-nowrap rounded-full px-2.25 py-0.75 text-[11.5px] font-bold",
         className,
       )}
       style={{ background: tone.bg, color: tone.fg }}
@@ -46,7 +48,7 @@ export function Pill({ tone, children, className }: { tone: Tone; children: Reac
 export function Tag({ tone, children }: { tone: Tone; children: ReactNode }) {
   return (
     <span
-      className="whitespace-nowrap rounded-[6px] px-[7px] py-[2px] text-[10.5px] font-semibold"
+      className="whitespace-nowrap rounded-md px-1.75 py-0.5 text-[10.5px] font-semibold"
       style={{ background: tone.bg, color: tone.fg }}
     >
       {children}
@@ -54,38 +56,9 @@ export function Tag({ tone, children }: { tone: Tone; children: ReactNode }) {
   );
 }
 
-/** Indicador circular de canal (16 px) con su sigla. */
-export function ChannelDot({
-  color,
-  short,
-  label,
-  bordered = false,
-  className,
-}: {
-  color: string;
-  short: string;
-  label: string;
-  bordered?: boolean;
-  className?: string;
-}) {
-  return (
-    <span
-      role="img"
-      aria-label={label}
-      title={label}
-      className={cn(
-        "grid size-4 shrink-0 place-items-center rounded-full text-[7.5px] font-bold leading-none text-white",
-        bordered && "border-2 border-white",
-        className,
-      )}
-      style={{ background: color }}
-    >
-      {short}
-    </span>
-  );
-}
+export { ChannelDot };
 
-/** Avatar con iniciales; opcionalmente con la insignia del canal. */
+/** Avatar con iniciales; opcionalmente con el logotipo del canal en la esquina. */
 export function Avatar({
   text,
   size = 40,
@@ -95,7 +68,7 @@ export function Avatar({
   text: string;
   size?: number;
   fontSize?: number;
-  badge?: { color: string; short: string; label: string };
+  badge?: ContactChannel;
 }) {
   return (
     <div
@@ -105,13 +78,7 @@ export function Avatar({
     >
       {text}
       {badge ? (
-        <ChannelDot
-          color={badge.color}
-          short={badge.short}
-          label={badge.label}
-          bordered
-          className="absolute -bottom-0.5 -right-0.5"
-        />
+        <ChannelDot channel={badge} size={size >= 38 ? 18 : 16} bordered className="absolute -bottom-0.5 -right-0.5" />
       ) : null}
     </div>
   );
@@ -134,7 +101,7 @@ export function FilterChip({
       aria-pressed={active}
       className={cn(
         "cursor-pointer whitespace-nowrap rounded-full border text-[12.5px] font-semibold transition-colors",
-        size === "sm" ? "h-7 px-[11px]" : "h-[30px] px-3",
+        size === "sm" ? "h-7 px-2.75" : "h-7.5 px-3",
         active ? "border-brand bg-brand text-white" : "border-field bg-white text-slate hover:bg-surface",
       )}
       {...rest}
@@ -157,7 +124,8 @@ export function Segmented<T extends string>({
   ariaLabel: string;
 }) {
   return (
-    <div role="tablist" aria-label={ariaLabel} className="flex gap-1 rounded-xl bg-segment p-1">
+    // En pantallas estrechas las pestañas que no caben se desplazan en horizontal dentro del control.
+    <div role="tablist" aria-label={ariaLabel} className="relative flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl bg-segment p-1">
       {options.map((o) => {
         const active = o.value === value;
         return (
@@ -168,7 +136,7 @@ export function Segmented<T extends string>({
             aria-selected={active}
             onClick={() => onChange(o.value)}
             className={cn(
-              "h-8 cursor-pointer whitespace-nowrap rounded-[9px] px-3.5 text-[13px] font-semibold",
+              "h-8 shrink-0 cursor-pointer whitespace-nowrap rounded-[9px] px-3.5 text-[13px] font-semibold",
               active ? "bg-white text-ink shadow-[0_1px_2px_rgba(20,27,45,.1)]" : "bg-transparent text-muted",
             )}
           >
@@ -202,11 +170,11 @@ export function Toggle({
       disabled={disabled}
       onClick={() => onChange?.(!checked)}
       className={cn(
-        "flex h-[22px] w-[38px] shrink-0 cursor-pointer rounded-full border-0 p-0.5 transition-colors disabled:opacity-60",
+        "flex h-5.5 w-9.5 shrink-0 cursor-pointer rounded-full border-0 p-0.5 transition-colors disabled:opacity-60",
         checked ? "justify-end bg-brand" : "justify-start bg-toggle-off",
       )}
     >
-      <span className="size-[18px] rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,.2)]" />
+      <span className="size-4.5 rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,.2)]" />
     </button>
   );
 }
@@ -223,11 +191,12 @@ export function PageHeader({
 }) {
   return (
     <div className="flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <h1 className="m-0 text-2xl font-bold tracking-[-.01em]">{title}</h1>
+      <div className="min-w-0">
+        <h1 className="m-0 text-[22px] font-bold tracking-[-.01em] sm:text-2xl">{title}</h1>
         {subtitle ? <p className="m-0 mt-1 text-[13.5px] text-pretty text-muted">{subtitle}</p> : null}
       </div>
-      {actions}
+      {/* Nunca más ancho que la página: en pantallas estrechas los controles bajan de línea o se desplazan. */}
+      {actions ? <div className="min-w-0 max-w-full max-sm:w-full">{actions}</div> : null}
     </div>
   );
 }
@@ -250,7 +219,7 @@ export function KpiCard({
     <div
       className={cn(
         "flex min-w-0 flex-col gap-1.5 rounded-2xl border border-card",
-        size === "md" ? "px-[18px] py-4" : "p-[18px]",
+        size === "md" ? "px-4.5 py-4" : "p-4.5",
       )}
     >
       <div className="text-[12.5px] text-muted">{label}</div>

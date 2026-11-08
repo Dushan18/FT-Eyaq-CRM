@@ -116,6 +116,24 @@ describe("celda CLIENTE", () => {
     expect(customerIdentity({ ...base, phone: "+51912345678", email: "x@correo.pe" }).contact).toBe("x@correo.pe");
     expect(customerIdentity({ ...base, email: "x@correo.pe" })).toMatchObject({ name: "x@correo.pe", contact: "Sin nombre registrado" });
   });
+
+  it("un cliente de Messenger sin datos se titula «Cliente de Messenger»", () => {
+    expect(customerIdentity({ ...base, sourceChannel: "FACEBOOK" })).toEqual({ name: "Cliente de Messenger", contact: null, initials: "?" });
+    // Con el nombre que dio Meta, se usa ese nombre.
+    expect(customerIdentity({ ...base, firstName: "Rosa Mamani", sourceChannel: "FACEBOOK" }).name).toBe("Rosa Mamani");
+    expect(customerIdentity({ ...base, sourceChannel: "WHATSAPP" }).name).toBe("Cliente sin nombre");
+  });
+
+  it("un cliente de Instagram sin datos se titula «Cliente de Instagram»", () => {
+    expect(customerIdentity({ ...base, sourceChannel: "INSTAGRAM" })).toEqual({ name: "Cliente de Instagram", contact: null, initials: "?" });
+    // Sin nombre en el perfil, bk-crm guarda el usuario con arroba: se muestra tal cual, sin la arroba en las iniciales.
+    expect(customerIdentity({ ...base, firstName: "@ana.q", sourceChannel: "INSTAGRAM" })).toEqual({ name: "@ana.q", contact: null, initials: "A" });
+    expect(customerIdentity({ ...base, firstName: "Rosa Mamani", sourceChannel: "INSTAGRAM" })).toEqual({
+      name: "Rosa Mamani",
+      contact: null,
+      initials: "RM",
+    });
+  });
 });
 
 describe("celdas derivadas", () => {

@@ -24,6 +24,18 @@ export class BackendUnavailableError extends Error {
   }
 }
 
+// Generar un borrador de Samanta espera a la IA hasta SAMANTA_TIMEOUT_MS en bk-crm (máximo 60 s),
+// más que el techo general: solo esa ruta tiene un techo propio.
+const SAMANTA_GENERATION_PATH = /^\/conversations\/[^/]+\/assistant-drafts$/;
+const SAMANTA_GENERATION_TIMEOUT_MS = 65_000;
+
+/** Techo de tiempo de una llamada: el general, salvo al generar un borrador de Samanta. */
+export function backendTimeoutMs(req: Pick<BackendRequest, "method" | "path">, defaultMs: number): number {
+  return req.method.toUpperCase() === "POST" && SAMANTA_GENERATION_PATH.test(req.path)
+    ? Math.max(defaultMs, SAMANTA_GENERATION_TIMEOUT_MS)
+    : defaultMs;
+}
+
 /** Llama a bk-crm (modo live) o al backend simulado (modo mock) y devuelve la respuesta tal cual. */
 export async function backendFetch(req: BackendRequest): Promise<Response> {
   const env = getServerEnv();
@@ -47,7 +59,7 @@ export async function backendFetch(req: BackendRequest): Promise<Response> {
       body: req.body ?? undefined,
       cache: "no-store",
       redirect: "manual",
-      signal: AbortSignal.timeout(env.backendTimeoutMs),
+      signal: AbortSignal.timeout(backendTimeoutMs(req, env.backendTimeoutMs)),
     });
   } catch (error) {
     const isTimeout = error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError");

@@ -1,11 +1,10 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ApiError } from "@/lib/api/client";
+import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import { useLayoutEffect, useState } from "react";
 import { customersApi, reservationsApi } from "@/lib/api/endpoints";
 import { qk } from "@/lib/api/query-keys";
-import type { CustomerDetail, Reservation, ReservationDetail, ReservationStatusTarget } from "@/lib/api/types";
+import type { CustomerDetail, Reservation, ReservationDetail } from "@/lib/api/types";
 import { useSession } from "@/lib/auth/session";
 import { channelMeta } from "@/lib/domain/channels";
 import { customerName, itemName } from "@/lib/domain/conversation";
@@ -14,13 +13,24 @@ import { TONES } from "@/lib/domain/tones";
 import { formatTime, formatWeekdayDate } from "@/lib/format/dates";
 import { orDash } from "@/lib/format/text";
 import { useRestaurant } from "@/lib/restaurant";
-import { ChannelDot, DetailList, Panel, Pill, SectionLabel } from "@/components/ui/primitives";
-import { ErrorState, InlineNotice, LoadingState } from "@/components/ui/state";
-import { PREPARED_TARGET, prepareAction } from "./calendar-utils";
+import { Dialog } from "@/components/ui/dialog";
+import { Button, ChannelDot, DetailList, Panel, Pill, SectionLabel } from "@/components/ui/primitives";
+import { ErrorState, LoadingState } from "@/components/ui/state";
+import { canManageReservation, type Viewer } from "./reservation-actions";
+import { AssigneeSection } from "./reservation-assignee";
+import { EditReservationDialog, RescheduleDialog } from "./reservation-dialogs";
+import { NotesSection, RescheduleHistory } from "./reservation-history";
+import { StatusControl } from "./reservation-status-control";
+
+interface Permissions {
+  /** can("reservation.status"): cambiar el estado. */
+  canStatus: boolean;
+  viewer: Viewer;
+}
 
 /**
  * Panel derecho del Calendario. La reserva se carga por id (GET /reservations/:id), así que se muestra
- * aunque ya no esté en el periodo visible.
+ * aunque ya no esté en el periodo visible (por ejemplo, después de reprogramarla).
  */
 export function ReservationDetailPanel({
   reservationId,
@@ -33,19 +43,19 @@ export function ReservationDetailPanel({
   /** false mientras no se sepa si el rol puede leer reservas. */
   enabled: boolean;
 }) {
-  const session = useSession();
-  const canWrite = session.can("reservation.status");
+  const permissions = usePermissions();
+  const canWrite = permissions.canStatus || permissions.viewer.canEdit;
 
   // `leading-[normal]`: el mockup no fija interlineado en el panel (salvo el texto vacío, que usa 1.5).
   return (
     <Panel as="aside" aria-label="Detalle de reserva" className="flex flex-col gap-4 overflow-y-auto p-5 leading-[normal]">
       <SectionLabel>Detalle de reserva</SectionLabel>
       {reservationId ? (
-        <ReservationDetailBody key={reservationId} id={reservationId} listRow={listRow} canWrite={canWrite} enabled={enabled} />
+        <ReservationDetailBody key={reservationId} id={reservationId} listRow={listRow} permissions={permissions} enabled={enabled} />
       ) : (
-        <p className="m-0 text-[13px] leading-[1.5] text-muted">
+        <p className="m-0 text-[13px] leading-normal text-muted">
           {canWrite
-            ? "Selecciona una reserva para revisar los detalles y marcarla como preparada."
+            ? "Selecciona una reserva para ver sus detalles, cambiar su estado o agregar observaciones."
             : "Selecciona una reserva para revisar sus detalles."}
         </p>
       )}
@@ -53,15 +63,50 @@ export function ReservationDetailPanel({
   );
 }
 
+/**
+ * El mismo detalle en un panel lateral, cuando la pantalla no tiene sitio para la columna derecha: se abre
+ * al elegir una reserva y al cerrarlo se deja de seleccionar.
+ */
+export function ReservationDetailSheet({
+  reservationId,
+  listRow,
+  enabled,
+  onClose,
+}: {
+  reservationId: string | null;
+  listRow?: Reservation;
+  enabled: boolean;
+  onClose: () => void;
+}) {
+  const permissions = usePermissions();
+  return (
+    <Dialog open={reservationId !== null} onClose={onClose} title="Detalle de reserva" placement="right">
+      {reservationId ? (
+        <div className="flex flex-col gap-4 leading-[normal]">
+          <ReservationDetailBody key={reservationId} id={reservationId} listRow={listRow} permissions={permissions} enabled={enabled} />
+        </div>
+      ) : null}
+    </Dialog>
+  );
+}
+
+function usePermissions(): Permissions {
+  const session = useSession();
+  return {
+    canStatus: session.can("reservation.status"),
+    viewer: { roles: session.roles, userId: session.user?.id ?? null, canEdit: session.can("reservation.edit") },
+  };
+}
+
 function ReservationDetailBody({
   id,
   listRow,
-  canWrite,
+  permissions,
   enabled,
 }: {
   id: string;
   listRow?: Reservation;
-  canWrite: boolean;
+  permissions: Permissions;
   enabled: boolean;
 }) {
   const detail = useQuery({
@@ -70,17 +115,47 @@ function ReservationDetailBody({
     refetchInterval: 60_000,
     enabled,
   });
+  // Respuesta del último PATCH. Se guarda como estado para mostrar el cambio en el mismo render en que se
+  // cierra la acción (sin parpadeos) y aunque el detalle aún no estuviera en caché. Gana hasta que el
+  // detalle se vuelva a leer con un `updatedAt` más reciente.
+  const [saved, setSaved] = useState<Reservation | null>(null);
 
   if (detail.isError && !detail.data) {
     return <ErrorState error={detail.error} subject="la reserva" onRetry={() => void detail.refetch()} className="px-0" />;
   }
-  const reservation: Reservation | undefined = detail.data ?? listRow;
-  if (!reservation) return <LoadingState label="Cargando reserva…" />;
-  return <ReservationSummary reservation={reservation} canWrite={canWrite} />;
+  const base: Reservation | ReservationDetail | undefined = detail.data ?? listRow;
+  if (!base) return <LoadingState label="Cargando reserva…" />;
+  const reservation: Reservation = saved && saved.updatedAt >= base.updatedAt ? { ...base, ...saved } : base;
+
+  return (
+    <ReservationSummary
+      reservation={reservation}
+      history={detail.data ?? null}
+      permissions={permissions}
+      onSaved={setSaved}
+    />
+  );
 }
 
-function ReservationSummary({ reservation: r, canWrite }: { reservation: Reservation; canWrite: boolean }) {
+type OpenDialog = "edit" | "reschedule" | null;
+
+function ReservationSummary({
+  reservation: r,
+  history,
+  permissions,
+  onSaved,
+}: {
+  reservation: Reservation;
+  /** Detalle con historiales; null mientras solo se tiene la fila del listado. */
+  history: Pick<ReservationDetail, "noteHistory" | "rescheduleHistory"> | null;
+  permissions: Permissions;
+  onSaved: (updated: Reservation) => void;
+}) {
   const { timeZone } = useRestaurant();
+  const [dialog, setDialog] = useState<OpenDialog>(null);
+  // Al ocultarse la vista (Activity) no queda abierto ningún diálogo.
+  useLayoutEffect(() => () => setDialog(null), []);
+
   // La reserva no trae canal: se usa el canal de origen del cliente.
   const customer = useQuery({
     queryKey: qk.customer(r.customerId),
@@ -88,13 +163,16 @@ function ReservationSummary({ reservation: r, canWrite }: { reservation: Reserva
     staleTime: 5 * 60_000,
   });
   const status = RESERVATION_STATUS[r.status];
+  // En bk-crm toda reserva se registra con «Nueva reserva» (reservationRequestId siempre es null); el modo
+  // simulado también crea reservas a partir de solicitudes aceptadas.
   const fromRequest = r.reservationRequestId !== null;
+  const manageable = canManageReservation(r.status, permissions.viewer.canEdit);
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
         <span className="text-xs text-subtle">{r.code}</span>
-        <span className="text-[18px] font-bold">{customerName(r.customer)}</span>
+        <span className="text-[18px] font-bold">{customerName(r.customer, customer.data?.sourceChannel)}</span>
         <ChannelLine customer={customer} />
       </div>
       <DetailList
@@ -103,14 +181,38 @@ function ReservationSummary({ reservation: r, canWrite }: { reservation: Reserva
           { label: "Hora", value: formatTime(r.reservationAt, timeZone), strong: true },
           { label: "Personas", value: r.numberOfPeople, strong: true },
           { label: "Servicio", value: itemName(r.commercialItem), strong: true },
-          { label: "Notas", value: <span className="wrap-break-word">{orDash(r.notes)}</span> },
+          { label: "Notas", value: <span className="whitespace-pre-wrap wrap-break-word">{orDash(r.notes)}</span> },
         ]}
       />
       <div className="flex flex-wrap gap-1.5">
-        <Pill tone={fromRequest ? TONES.green : TONES.gray}>{fromRequest ? "Aceptada por el dueño" : "Registrada en el CRM"}</Pill>
+        <Pill tone={fromRequest ? TONES.blue : TONES.gray}>{fromRequest ? "Desde una solicitud" : "Registro manual"}</Pill>
         <Pill tone={status.tone}>{status.label}</Pill>
       </div>
-      <PrepareControl reservation={r} canWrite={canWrite} />
+
+      <StatusControl reservation={r} canWrite={permissions.canStatus} onSaved={onSaved} />
+
+      {manageable ? (
+        <div className="flex gap-2">
+          <Button variant="outline" className="h-9 flex-1 px-3" onClick={() => setDialog("edit")}>
+            Editar
+          </Button>
+          <Button variant="outline" className="h-9 flex-1 px-3" onClick={() => setDialog("reschedule")}>
+            Reprogramar
+          </Button>
+        </div>
+      ) : null}
+
+      <AssigneeSection reservation={r} viewer={permissions.viewer} onSaved={onSaved} />
+      <NotesSection
+        reservationId={r.id}
+        notes={history?.noteHistory ?? null}
+        canAdd={permissions.viewer.canEdit}
+        timeZone={timeZone}
+      />
+      {history ? <RescheduleHistory entries={history.rescheduleHistory} timeZone={timeZone} /> : null}
+
+      {dialog === "edit" ? <EditReservationDialog reservation={r} onClose={() => setDialog(null)} onSaved={onSaved} /> : null}
+      {dialog === "reschedule" ? <RescheduleDialog reservation={r} onClose={() => setDialog(null)} onSaved={onSaved} /> : null}
     </div>
   );
 }
@@ -121,7 +223,7 @@ function ChannelLine({ customer }: { customer: UseQueryResult<CustomerDetail> })
     return (
       <span className="flex items-center gap-1.5 text-[12.5px] text-muted" title="Canal por el que llegó el cliente">
         <span aria-hidden="true">
-          <ChannelDot color={ch.color} short={ch.short} label={ch.label} />
+          <ChannelDot channel={customer.data.sourceChannel} />
         </span>
         {ch.label}
       </span>
@@ -142,142 +244,4 @@ function ChannelLine({ customer }: { customer: UseQueryResult<CustomerDetail> })
     );
   }
   return <span className="text-[12.5px] text-faint">Cargando canal…</span>;
-}
-
-function prepareErrorText(error: unknown): string {
-  const detail = error instanceof ApiError ? error.messages.join(" ") : error instanceof Error ? error.message : "";
-  return detail ? `No se pudo marcar como preparada. ${detail}` : "No se pudo marcar como preparada.";
-}
-
-/**
- * "Marcar como preparada" → PATCH /reservations/:id/status {status: PREPARED_STATUS}. El backend no permite
- * volver atrás, por eso se pide confirmación en línea antes de enviarlo.
- */
-function PrepareControl({ reservation, canWrite }: { reservation: Reservation; canWrite: boolean }) {
-  const queryClient = useQueryClient();
-  const [confirming, setConfirming] = useState(false);
-  // Respuesta del PATCH. Se guarda como estado (y no se lee de `mutation.data`) para que cambie en el mismo
-  // render en que se cierra la confirmación: así no reaparece "Marcar como preparada" un instante.
-  const [saved, setSaved] = useState<Reservation | null>(null);
-  const markRef = useRef<HTMLButtonElement>(null);
-  const confirmRef = useRef<HTMLButtonElement>(null);
-  const cancelRef = useRef<HTMLButtonElement>(null);
-  const preparedRef = useRef<HTMLDivElement>(null);
-  const focusNext = useRef<"mark" | "confirm" | "cancel" | "prepared" | null>(null);
-
-  const mutation = useMutation({
-    mutationFn: (target: ReservationStatusTarget) => reservationsApi.setStatus(reservation.id, target),
-    onSuccess: (updated) => {
-      // La respuesta no trae historiales: se mezcla con el detalle en caché para mostrar el estado nuevo ya.
-      queryClient.setQueryData<ReservationDetail>(qk.reservation(updated.id), (old) => (old ? { ...old, ...updated } : old));
-      setSaved(updated);
-      focusNext.current = "prepared";
-      setConfirming(false);
-    },
-    onError: () => {
-      focusNext.current = "confirm";
-    },
-    // También tras un 409: el estado cambió en otro lado y hay que mostrar el actual.
-    onSettled: () => queryClient.invalidateQueries({ queryKey: qk.reservationsAll }),
-  });
-  const { reset } = mutation;
-
-  // Al ocultarse la vista (Activity) no deben quedar abiertos la confirmación ni un aviso viejo.
-  useLayoutEffect(
-    () => () => {
-      setConfirming(false);
-      reset();
-    },
-    [reset],
-  );
-
-  // Lleva el foco al control que reemplaza al que se usó, para no perderlo. Espera a que exista y esté
-  // habilitado: mientras se guarda (y se vuelven a leer las reservas) los botones siguen deshabilitados.
-  useEffect(() => {
-    const refs = { mark: markRef, confirm: confirmRef, cancel: cancelRef, prepared: preparedRef };
-    const element = focusNext.current ? refs[focusNext.current].current : null;
-    if (!element || (element instanceof HTMLButtonElement && element.disabled)) return;
-    element.focus();
-    focusNext.current = null;
-  });
-
-  // La respuesta del PATCH es la versión más reciente hasta que el detalle se vuelva a leer.
-  const current = saved && saved.updatedAt >= reservation.updatedAt ? saved : reservation;
-  const action = prepareAction(current.status, canWrite);
-  const target = PREPARED_TARGET;
-  const error = mutation.isError ? <InlineNotice tone="error">{prepareErrorText(mutation.error)}</InlineNotice> : null;
-
-  if (action === "prepared") {
-    return (
-      <div
-        ref={preparedRef}
-        role="status"
-        tabIndex={-1}
-        className="grid h-[42px] place-items-center rounded-xl bg-[#e8f6ee] text-[13.5px] font-bold text-[#14753f]"
-      >
-        <span>
-          Preparada <span aria-hidden="true">✓</span>
-        </span>
-      </div>
-    );
-  }
-  if (action === "none" || target === null) return error;
-
-  const open = () => {
-    reset();
-    focusNext.current = "cancel";
-    setConfirming(true);
-  };
-  const cancel = () => {
-    reset();
-    focusNext.current = "mark";
-    setConfirming(false);
-  };
-
-  return (
-    <div className="flex flex-col gap-2">
-      {confirming ? (
-        <div
-          role="group"
-          aria-label="Confirmar que la reserva está preparada"
-          onKeyDown={(event) => {
-            if (event.key === "Escape" && !mutation.isPending) cancel();
-          }}
-          className="flex flex-col gap-2.5 rounded-xl border border-card bg-surface p-3"
-        >
-          <p className="m-0 text-[13px] font-semibold leading-[1.45] text-ink">No se puede deshacer. ¿Marcar como preparada?</p>
-          <div className="flex gap-2">
-            <button
-              ref={confirmRef}
-              type="button"
-              onClick={() => mutation.mutate(target)}
-              disabled={mutation.isPending}
-              className="h-9 flex-1 cursor-pointer rounded-[10px] border-0 bg-brand text-[13px] font-bold text-white transition-colors hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {mutation.isPending ? "Guardando…" : "Confirmar"}
-            </button>
-            <button
-              ref={cancelRef}
-              type="button"
-              onClick={cancel}
-              disabled={mutation.isPending}
-              className="h-9 flex-1 cursor-pointer rounded-[10px] border border-button bg-white text-[13px] font-semibold text-ink-2 transition-colors hover:bg-[#f5f7fa] disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Cancelar
-            </button>
-          </div>
-        </div>
-      ) : (
-        <button
-          ref={markRef}
-          type="button"
-          onClick={open}
-          className="h-[42px] cursor-pointer rounded-xl border-0 bg-brand text-[13.5px] font-bold text-white transition-colors hover:bg-brand-hover"
-        >
-          Marcar como preparada
-        </button>
-      )}
-      {error}
-    </div>
-  );
 }

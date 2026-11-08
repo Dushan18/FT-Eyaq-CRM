@@ -23,10 +23,15 @@ export function Sidebar() {
   const views = VIEW_ORDER.filter((v) => session.canView(v));
 
   return (
-    <nav aria-label="Navegación principal" className="flex flex-col items-center gap-1.5 rounded-[20px] bg-navy py-[18px]">
+    // Desde md: columna vertical del mockup. Más estrecho: barra inferior con las vistas repartidas y la cuenta
+    // al final; por debajo de sm solo se ven los íconos (el nombre queda para lectores de pantalla y `title`).
+    <nav
+      aria-label="Navegación principal"
+      className="row-start-2 flex items-center gap-1 rounded-2xl bg-navy p-1.5 md:row-start-1 md:flex-col md:gap-1.5 md:rounded-[20px] md:px-0 md:py-4.5"
+    >
       <div
         aria-hidden="true"
-        className="mb-[18px] grid size-[38px] place-items-center rounded-full"
+        className="mb-4.5 grid size-9.5 place-items-center rounded-full max-md:hidden"
         style={{ background: "conic-gradient(#f26a1b 0 30%,#1f9d55 0 55%,#2b55e6 0 100%)" }}
       >
         <div className="size-4 rounded-full bg-navy" />
@@ -40,17 +45,17 @@ export function Sidebar() {
             href={href}
             title={VIEW_LABELS[view]}
             aria-current={active ? "page" : undefined}
-            className="flex w-[52px] flex-col items-center gap-1 rounded-xl pb-1.5 pt-2 no-underline transition-colors hover:bg-white/[.08]"
+            className="flex min-w-0 flex-1 flex-col items-center gap-1 rounded-xl py-2 no-underline transition-colors hover:bg-white/8 md:w-13 md:flex-none md:pb-1.5"
             style={{ background: active ? "rgba(255,255,255,.12)" : undefined, color: active ? "#fff" : "#9aa6c8" }}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d={ICONS[view]} />
             </svg>
-            <span className="text-[9.5px] font-semibold tracking-[.01em]">{VIEW_LABELS[view]}</span>
+            <span className="text-[9.5px] font-semibold tracking-[.01em] max-md:max-w-full max-md:truncate max-sm:sr-only">{VIEW_LABELS[view]}</span>
           </Link>
         );
       })}
-      <div className="flex-1" />
+      <div className="flex-1 max-md:hidden" />
       <UserMenu />
     </nav>
   );
@@ -81,7 +86,7 @@ function UserMenu() {
   }, [open]);
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="relative shrink-0 max-md:px-1">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -94,7 +99,11 @@ function UserMenu() {
         {user ? initials(name) : "·"}
       </button>
       {open && user ? (
-        <div role="menu" className="absolute bottom-0 left-[46px] z-20 w-60 rounded-2xl border border-card bg-white p-3 shadow-[0_8px_24px_rgba(14,24,56,.18)]">
+        // Con la barra inferior el menú se abre hacia arriba; con la columna, a la derecha del botón.
+        <div
+          role="menu"
+          className="absolute bottom-12 right-0 z-20 w-60 max-w-[calc(100vw-1rem)] rounded-2xl border border-card bg-white p-3 shadow-[0_8px_24px_rgba(14,24,56,.18)] md:bottom-0 md:left-11.5 md:right-auto"
+        >
           <div className="px-1 pb-2">
             <div className="truncate text-[13.5px] font-bold text-ink">{name}</div>
             <div className="truncate text-xs text-subtle">{user.email}</div>

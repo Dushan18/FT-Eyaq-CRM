@@ -1,21 +1,20 @@
 import type { NextRequest } from "next/server";
+import { toBackendPath } from "@/lib/server/proxy-path";
 import { jsonError, proxyWithSession } from "@/lib/server/session";
 
 /**
  * Proxy autenticado hacia bk-crm (mismo origen para el navegador, sin CORS y sin exponer tokens).
  * /api/backend/conversations?channel=WHATSAPP → GET {CRM_BACKEND_URL}/conversations?channel=WHATSAPP
+ * Las rutas de sesión y los webhooks no se exponen (ver toBackendPath).
  */
-
-/** Rutas que no se exponen por el proxy: tienen manejador propio o son de servidor a servidor. */
-const BLOCKED = [/^\/auth\/(login|refresh|logout|forgot-password|reset-password)$/, /^\/webhooks(\/|$)/, /^\/auth\/test-admin$/];
 
 /** Cabeceras del navegador que se reenvían; el resto (cookies incluidas) se descarta. */
 const FORWARDED_HEADERS = ["content-type", "idempotency-key", "accept-language"];
 
 async function handle(request: NextRequest, ctx: RouteContext<"/api/backend/[...path]">) {
   const { path } = await ctx.params;
-  const backendPath = `/${path.map((segment) => encodeURIComponent(segment)).join("/")}`;
-  if (BLOCKED.some((re) => re.test(backendPath))) {
+  const backendPath = toBackendPath(path);
+  if (backendPath === null) {
     return jsonError(404, "Ruta no disponible.");
   }
 

@@ -11,6 +11,7 @@ import type {
   CreateCommercialItemRequest,
   Paginated,
 } from "@/lib/api/types";
+import { MONEY_PATTERN } from "@/lib/api/types";
 import { TONES, type Tone } from "@/lib/domain/tones";
 import { formatMoney } from "@/lib/format/money";
 
@@ -25,8 +26,8 @@ export function pageFromParam(value: string | null): number {
   return Math.min(page, MAX_PAGE);
 }
 
-/** Mismo patrón que COMMERCIAL_MONEY_PATTERN del backend: hasta 8 enteros y 2 decimales, con punto. */
-export const MONEY_PATTERN = /^(?:0|[1-9]\d{0,7})(?:\.\d{1,2})?$/;
+/** Mismo patrón que COMMERCIAL_MONEY_PATTERN del backend (se define una sola vez en lib/api/types). */
+export { MONEY_PATTERN };
 export const NAME_MAX_LENGTH = 200;
 export const DESCRIPTION_MAX_LENGTH = 5000;
 /** Las condiciones pueden tener hasta 5000 caracteres; en la columna de precio solo cabe un resumen. */

@@ -20,7 +20,7 @@ export function EmptyState({ children, className, dashed = false }: { children: 
   return (
     <div
       className={cn(
-        "px-[18px] py-[30px] text-center text-[13px] text-subtle",
+        "px-4.5 py-7.5 text-center text-[13px] text-subtle",
         dashed && "rounded-[14px] border border-dashed border-dashed-line",
         className,
       )}

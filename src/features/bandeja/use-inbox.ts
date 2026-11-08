@@ -106,6 +106,10 @@ function hasPendingOutbound(page: Paginated<Message> | undefined): boolean {
  * Historial del chat. La página 1 (más reciente) se sondea; mientras haya envíos en cola se sondea
  * más rápido para mostrar el cambio de estado. "Cargar anteriores" pide páginas más antiguas y las une
  * por id (el desplazamiento cambia cuando llegan mensajes nuevos, así que puede haber solapes).
+ *
+ * Cuando llegan mensajes nuevos, los más viejos de la página reciente salen de ella. Se conservan en
+ * `older`: si no, ya no estarían en ninguna de las dos listas y quedaría un hueco en medio del chat
+ * (con anteriores cargados) o desaparecerían de la vista mientras se leen.
  */
 export function useConversationMessages(conversationId: string | null) {
   const recent = useQuery({
@@ -116,6 +120,27 @@ export function useConversationMessages(conversationId: string | null) {
   });
 
   const [older, setOlder] = useState<{ conversationId: string | null; rows: Message[] }>({ conversationId: null, rows: [] });
+
+  // Al cambiar la página reciente, la anterior pasa a `older` (deduplicada; la reciente manda en estados).
+  // Es el patrón de React para derivar estado de un render anterior, sin efecto.
+  const recentRows = recent.data?.data;
+  const [seenRecent, setSeenRecent] = useState<{ conversationId: string | null; rows: Message[] | undefined }>({
+    conversationId,
+    rows: recentRows,
+  });
+  if (seenRecent.conversationId !== conversationId || seenRecent.rows !== recentRows) {
+    setSeenRecent({ conversationId, rows: recentRows });
+    const previous = seenRecent.conversationId === conversationId ? seenRecent.rows : undefined;
+    if (conversationId !== null && previous && recentRows) {
+      const kept = older.conversationId === conversationId ? older.rows : NO_MESSAGES;
+      // Si la página nueva no comparte ningún mensaje con la anterior, llegaron más de los que caben en
+      // una página (p. ej., con la pestaña oculta no se sondea): lo guardado ya no es contiguo. Se
+      // descarta y se ve la última página, en vez de un hueco que "Cargar anteriores" no podría llenar.
+      const ids = new Set(recentRows.map((m) => m.id));
+      const contiguous = previous.some((m) => ids.has(m.id));
+      setOlder({ conversationId, rows: contiguous ? mergeMessages(previous, kept) : [] });
+    }
+  }
   const [olderState, setOlderState] = useState<{ conversationId: string | null; loading: boolean; error: unknown }>({
     conversationId: null,
     loading: false,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Message } from "@/lib/api/types";
-import { conversationMode, customerName, messageAuthor, messageText, previewPrefix } from "./conversation";
+import { conversationMode, customerInitials, customerName, messageAuthor, messageText, previewPrefix } from "./conversation";
 import { REQUEST_TAB_STATUSES, requestStatusView, requestTimeline } from "./statuses";
 
 const state = (steps: ReturnType<typeof requestTimeline>) =>
@@ -26,6 +26,10 @@ describe("línea de tiempo de la solicitud (mockup)", () => {
     expect(requestTimeline("CANCELLED")[2]!.label).toBe("Cancelada");
   });
 
+  it("una solicitud cancelada no figura como enviada al dueño", () => {
+    expect(state(requestTimeline("CANCELLED"))).toEqual(["hecho", "pendiente", "hecho"]);
+  });
+
   it("las etiquetas y pestañas siguen los grupos del mockup", () => {
     expect(requestStatusView("WAITING_RESPONSE")).toMatchObject({ label: "Esperando al dueño", group: "esperando" });
     expect(requestStatusView("RENEGOTIATING").group).toBe("negociando");
@@ -41,10 +45,12 @@ describe("conversación", () => {
   });
 
   it("distingue cliente, Samanta y equipo, y arma la vista previa", () => {
-    expect(messageAuthor({ direction: "INBOUND", authorUserId: null })).toBe("cliente");
-    expect(messageAuthor({ direction: "OUTBOUND", authorUserId: null })).toBe("samanta");
+    expect(messageAuthor({ id: "m1", direction: "INBOUND" })).toBe("cliente");
+    // Samanta solo si el mensaje salió de un borrador aprobado; un saliente sin autor ya no se supone de Samanta.
+    expect(messageAuthor({ id: "m2", direction: "OUTBOUND" })).toBe("operador");
+    expect(messageAuthor({ id: "m2", direction: "OUTBOUND" }, new Set(["m2"]))).toBe("samanta");
     expect(previewPrefix({ direction: "OUTBOUND", authorUserId: "yo" }, "yo")).toBe("Tú: ");
-    expect(previewPrefix({ direction: "OUTBOUND", authorUserId: "otro" }, "yo")).toBe("Operador: ");
+    expect(previewPrefix({ direction: "OUTBOUND", authorUserId: "otro" }, "yo")).toBe("Equipo: ");
     expect(previewPrefix({ direction: "INBOUND", authorUserId: null }, "yo")).toBe("");
   });
 
@@ -59,5 +65,26 @@ describe("conversación", () => {
     expect(customerName({ firstName: null, lastName: null, phone: "+51912345678", email: null })).toBe("+51912345678");
     expect(customerName({ firstName: "Ana", lastName: null, phone: null, email: null })).toBe("Ana");
     expect(customerName({ firstName: null, lastName: null, phone: null, email: null })).toBe("Cliente sin nombre");
+  });
+
+  it("un cliente de Messenger sin datos tiene un respaldo propio", () => {
+    expect(customerName({ firstName: null, lastName: null, phone: null, email: null }, "FACEBOOK")).toBe("Cliente de Messenger");
+    expect(customerName({ firstName: "Rosa Mamani", lastName: null, phone: null, email: null }, "FACEBOOK")).toBe("Rosa Mamani");
+  });
+
+  it("un cliente de Instagram sin datos tiene un respaldo propio; con usuario se muestra el usuario", () => {
+    expect(customerName({ firstName: null, lastName: null, phone: null, email: null }, "INSTAGRAM")).toBe("Cliente de Instagram");
+    expect(customerName({ firstName: "Dushan Wqt", lastName: null, phone: null, email: null }, "INSTAGRAM")).toBe("Dushan Wqt");
+    expect(customerName({ firstName: "@dushan1812", lastName: null, phone: null, email: null }, "INSTAGRAM")).toBe("@dushan1812");
+  });
+
+  it("el avatar solo usa iniciales de un nombre real: sin nombre muestra «?»", () => {
+    expect(customerInitials({ firstName: "Dushan Wqt", lastName: null })).toBe("DW");
+    expect(customerInitials({ firstName: "Frank", lastName: "Huarcaya" })).toBe("FH");
+    expect(customerInitials({ firstName: "@dushan1812", lastName: null })).toBe("D");
+    // Sin nombre no salen «CD» de «Cliente de Messenger» ni «+» del teléfono.
+    expect(customerInitials({ firstName: null, lastName: null })).toBe("?");
+    expect(customerInitials({ firstName: "  ", lastName: null })).toBe("?");
+    expect(customerInitials(null)).toBe("?");
   });
 });

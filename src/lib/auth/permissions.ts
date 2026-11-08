@@ -34,11 +34,16 @@ export type Action =
   | "conversation.pause"
   | "conversation.assign"
   | "conversation.send"
-  // Solicitudes (PATCH /reservation-requests/:id/status)
+  // Borradores de Samanta: generar, editar, aprobar y rechazar (/conversations/:id/assistant-drafts)
+  | "draft.review"
+  // Solicitudes: crear y editar (POST, PATCH /reservation-requests) y cancelar (PATCH …/status)
+  | "request.edit"
   | "request.cancel"
-  // Calendario (PATCH /reservations/:id/status)
+  // Calendario: crear (POST /reservations, solo ADMIN); editar, responsable, notas y reprogramar; estado
+  | "reservation.create"
+  | "reservation.edit"
   | "reservation.status"
-  // Clientes (PATCH /customers/:id/status)
+  // Clientes: crear, editar, estado e intereses (POST, PATCH /customers, …/status, …/interests)
   | "customer.edit"
   // Ajustes (PUT /restaurant-config, catálogo, usuarios)
   | "config.edit"
@@ -72,7 +77,11 @@ export const ACTION_ROLES: Record<Action, RoleCode[]> = {
   "conversation.pause": WRITE_CORE,
   "conversation.assign": WRITE_CORE,
   "conversation.send": WRITE_CORE,
+  "draft.review": WRITE_CORE,
+  "request.edit": WRITE_CORE,
   "request.cancel": WRITE_CORE,
+  "reservation.create": ["ADMIN"],
+  "reservation.edit": WRITE_CORE,
   "reservation.status": WRITE_CORE,
   "customer.edit": WRITE_CORE,
   "config.edit": ["ADMIN"],

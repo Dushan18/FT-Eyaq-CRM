@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "@/lib/api/client";
-import type { CommercialItem, CommercialItemVariant, Paginated } from "@/lib/api/types";
+import type { CommercialItem, CommercialItemVariant, CommercialPromotionDetail, Paginated } from "@/lib/api/types";
 import { TONES } from "@/lib/domain/tones";
 import { formatMoney } from "@/lib/format/money";
 import {
@@ -35,6 +35,17 @@ function variant(price: string, isActive: boolean, displayOrder: number, nameEs:
     price,
     isActive,
     displayOrder,
+    createdAt: "2026-10-01T12:00:00.000Z",
+    updatedAt: "2026-10-01T12:00:00.000Z",
+  };
+}
+
+function promotion(promotionalPrice: string | null): CommercialPromotionDetail {
+  return {
+    id: `p-${promotionalPrice ?? "none"}`,
+    validFrom: null,
+    validUntil: null,
+    promotionalPrice,
     createdAt: "2026-10-01T12:00:00.000Z",
     updatedAt: "2026-10-01T12:00:00.000Z",
   };
@@ -113,7 +124,7 @@ describe("precio mostrado en la lista", () => {
 
   it("sin base ni variantes usa el precio promocional", () => {
     const view = priceView(
-      makeItem({ type: "PROMOTION", promotionDetail: { promotionalPrice: "30.00", validFrom: null, validUntil: null } }),
+      makeItem({ type: "PROMOTION", promotionDetail: promotion("30.00") }),
       "PEN",
     );
     expect(view.kind).toBe("promo");
@@ -134,7 +145,7 @@ describe("precio mostrado en la lista", () => {
 
   it("sin precio ni condiciones muestra «—»", () => {
     expect(priceView(makeItem({ type: "SERVICE", conditions: "   " }), "PEN")).toEqual({ kind: "none", text: "—" });
-    expect(priceView(makeItem({ type: "SERVICE", promotionDetail: { promotionalPrice: null, validFrom: null, validUntil: null } }), "PEN").text).toBe("—");
+    expect(priceView(makeItem({ type: "SERVICE", promotionDetail: promotion(null) }), "PEN").text).toBe("—");
   });
 });
 

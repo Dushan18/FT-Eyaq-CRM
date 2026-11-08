@@ -160,7 +160,8 @@ export function ServiciosView() {
         </InlineNotice>
       ) : null}
 
-      <div className="overflow-hidden rounded-[14px] border border-card" role="table" aria-label="Servicios y precios">
+      {/* En pantallas estrechas la tabla se desplaza en horizontal dentro del recuadro. */}
+      <div className="relative overflow-x-auto rounded-[14px] border border-card" role="table" aria-label="Servicios y precios">
         <div role="row" className="sr-only">
           <span role="columnheader">Servicio</span>
           <span role="columnheader">Categoría</span>
@@ -235,7 +236,7 @@ function ServiceRow({
   return (
     <div
       role="row"
-      className={cn(`grid ${COLUMNS} items-center gap-3.5 border-b border-line-2 px-4 py-3`, !item.isActive && "opacity-50")}
+      className={cn(`grid min-w-131 ${COLUMNS} items-center gap-3.5 border-b border-line-2 px-4 py-3`, !item.isActive && "opacity-50")}
     >
       <span role="cell" className="flex min-w-0 flex-col">
         <span className="flex min-w-0 items-center gap-2">

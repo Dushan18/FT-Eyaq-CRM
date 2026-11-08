@@ -82,12 +82,17 @@ export interface CustomerIdentity {
 
 /**
  * Nombre y contacto de la fila. Los clientes creados por WhatsApp no tienen nombre: el título pasa a ser
- * el teléfono (como en `customerName`) y la segunda línea lo aclara en vez de repetir el número.
+ * el teléfono (como en `customerName`) y la segunda línea lo aclara en vez de repetir el número. Los de
+ * Messenger e Instagram nunca traen teléfono ni correo y pueden no tener nombre todavía: se titulan
+ * «Cliente de Messenger» o «Cliente de Instagram». En Instagram el nombre puede ser el usuario con arroba
+ * («@ana.q»): se muestra tal cual y sus iniciales ignoran la arroba («A»).
  */
-export function customerIdentity(c: Pick<Customer, "firstName" | "lastName" | "phone" | "email">): CustomerIdentity {
+export function customerIdentity(
+  c: Pick<Customer, "firstName" | "lastName" | "phone" | "email"> & Partial<Pick<Customer, "sourceChannel">>,
+): CustomerIdentity {
   const fullName = personName(c.firstName, c.lastName, "");
   if (fullName) return { name: fullName, contact: c.phone ?? c.email ?? null, initials: initials(fullName) };
-  const name = customerName(c);
+  const name = customerName(c, c.sourceChannel);
   const contact = c.phone && c.email ? c.email : c.phone || c.email ? "Sin nombre registrado" : null;
   return { name, contact, initials: "?" };
 }
