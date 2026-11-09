@@ -3,10 +3,21 @@
  * backend; lo que el backend no tiene (eventos de sistema, vista previa, modo) se calcula o se omite.
  */
 import { ApiError } from "@/lib/api/client";
-import type { ContactChannel, Conversation, Message, Reservation, ReservationRequest } from "@/lib/api/types";
+import type {
+  ContactChannel,
+  Conversation,
+  Message,
+  Reservation,
+  ReservationRequest,
+} from "@/lib/api/types";
 import { isSendableChannel } from "@/lib/api/types";
 import { isConnectionError, isDisabledInServer } from "@/lib/api/errors";
-import { outboundErrorKind, outboundErrorText, sendChannelName, windowClosedText } from "./channel-utils";
+import {
+  outboundErrorKind,
+  outboundErrorText,
+  sendChannelName,
+  windowClosedText,
+} from "./channel-utils";
 import type { RoleCode } from "@/lib/auth/permissions";
 import { can } from "@/lib/auth/permissions";
 import { channelMeta } from "@/lib/domain/channels";
@@ -17,7 +28,8 @@ import { personName } from "@/lib/format/text";
 
 // ---------------------------------------------------------------- parámetros de la URL
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** El backend responde 400 a un :id que no es UUID: se valida antes de consultar. */
 export function isUuid(value: string): boolean {
@@ -31,13 +43,21 @@ const CHANNEL_SLUGS = {
   web: "WEBSITE",
 } as const satisfies Record<string, ContactChannel>;
 
-export function channelFromSlug(slug: string | null): ContactChannel | undefined {
-  return slug && slug in CHANNEL_SLUGS ? CHANNEL_SLUGS[slug as keyof typeof CHANNEL_SLUGS] : undefined;
+export function channelFromSlug(
+  slug: string | null,
+): ContactChannel | undefined {
+  return slug && slug in CHANNEL_SLUGS
+    ? CHANNEL_SLUGS[slug as keyof typeof CHANNEL_SLUGS]
+    : undefined;
 }
 
-export function slugFromChannel(channel: ContactChannel | undefined): string | null {
+export function slugFromChannel(
+  channel: ContactChannel | undefined,
+): string | null {
   if (!channel) return null;
-  const entry = Object.entries(CHANNEL_SLUGS).find(([, value]) => value === channel);
+  const entry = Object.entries(CHANNEL_SLUGS).find(
+    ([, value]) => value === channel,
+  );
   return entry ? entry[0] : null;
 }
 
@@ -48,7 +68,10 @@ export function slugFromChannel(channel: ContactChannel | undefined): string | n
  * Deduplica por id (la paginación por desplazamiento se corre cuando llegan mensajes nuevos),
  * prefiere la versión reciente (trae el último estado de entrega) y ordena por `sequence`.
  */
-export function mergeMessages(recent: readonly Message[], older: readonly Message[]): Message[] {
+export function mergeMessages(
+  recent: readonly Message[],
+  older: readonly Message[],
+): Message[] {
   const byId = new Map<string, Message>();
   for (const m of older) byId.set(m.id, m);
   for (const m of recent) byId.set(m.id, m);
@@ -57,7 +80,8 @@ export function mergeMessages(recent: readonly Message[], older: readonly Messag
 
 /** Hora que se muestra en la burbuja: la del proveedor para entrantes y la de envío para salientes. */
 export function messageTimestamp(m: Message): string {
-  if (m.direction === "INBOUND") return m.occurredAt ?? m.receivedAt ?? m.createdAt;
+  if (m.direction === "INBOUND")
+    return m.occurredAt ?? m.receivedAt ?? m.createdAt;
   return m.sentAt ?? m.createdAt;
 }
 
@@ -75,11 +99,14 @@ export function lastInboundAt(messages: readonly Message[]): number | null {
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Estimación de la ventana de 24 h de WhatsApp y Messenger (el backend no la expone). Usa la misma regla
+ * Estimación de la ventana de 24 h de WhatsApp, Messenger e Instagram (el backend no la expone). Usa la misma regla
  * que el backend: el último mensaje entrante con `occurredAt` en las últimas 24 h. El backend puede ser más
  * estricto (teléfono, PSID o número/página del negocio distintos), nunca más permisivo; su respuesta manda.
  */
-export function estimateReplyWindow(messages: readonly Message[], now: number): { open: boolean; closesAt: number | null } {
+export function estimateReplyWindow(
+  messages: readonly Message[],
+  now: number,
+): { open: boolean; closesAt: number | null } {
   let last = 0;
   for (const m of messages) {
     if (m.direction !== "INBOUND" || !m.occurredAt) continue;
@@ -97,13 +124,22 @@ export type StatusTone = "muted" | "warning" | "error";
  * mensajes de Samanta solo se muestran problemas o envíos en curso; para los del equipo, además, los checks.
  * `*_RATE_LIMITED` llega en QUEUED y también en el SENDING del reintento. Messenger nunca llega a READ.
  */
-export function outboundStatusView(m: Message, isSamanta = false): { text: string; tone: StatusTone } | null {
+export function outboundStatusView(
+  m: Message,
+  isSamanta = false,
+): { text: string; tone: StatusTone } | null {
   if (m.direction !== "OUTBOUND") return null;
   const byTeam = !isSamanta;
   switch (m.status) {
     case "QUEUED":
     case "SENDING":
-      return { text: outboundErrorKind(m.errorCode) === "RATE_LIMITED" ? "Reintentando…" : "Enviando…", tone: "muted" };
+      return {
+        text:
+          outboundErrorKind(m.errorCode) === "RATE_LIMITED"
+            ? "Reintentando…"
+            : "Enviando…",
+        tone: "muted",
+      };
     case "SENT":
       return byTeam ? { text: "✓ Enviado", tone: "muted" } : null;
     case "DELIVERED":
@@ -111,9 +147,15 @@ export function outboundStatusView(m: Message, isSamanta = false): { text: strin
     case "READ":
       return byTeam ? { text: "✓✓ Leído", tone: "muted" } : null;
     case "FAILED":
-      return { text: outboundErrorText(m.errorCode) ?? "No se envió", tone: "error" };
+      return {
+        text: outboundErrorText(m.errorCode) ?? "No se envió",
+        tone: "error",
+      };
     case "UNKNOWN":
-      return { text: "Estado incierto: verifica antes de reenviar", tone: "warning" };
+      return {
+        text: "Estado incierto: verifica antes de reenviar",
+        tone: "warning",
+      };
     default:
       return null;
   }
@@ -132,14 +174,17 @@ export function outboundAuthorLabel(
 ): string {
   if (messageAuthor(m, samantaIds) === "samanta") return "Samanta · IA";
   if (m.authorUserId && m.authorUserId === meId) return "Tú";
-  if (assignee && m.authorUserId === assignee.id) return personName(assignee.firstName, assignee.lastName, "Equipo");
+  if (assignee && m.authorUserId === assignee.id)
+    return personName(assignee.firstName, assignee.lastName, "Equipo");
   return "Equipo";
 }
 
 // ---------------------------------------------------------------- lista
 
 /** Última solicitud de cada cliente a partir de un listado ordenado por creación descendente. */
-export function latestRequestByCustomer(requests: readonly ReservationRequest[]): Map<string, ReservationRequest> {
+export function latestRequestByCustomer(
+  requests: readonly ReservationRequest[],
+): Map<string, ReservationRequest> {
   const map = new Map<string, ReservationRequest>();
   for (const r of requests) {
     const current = map.get(r.customerId);
@@ -160,24 +205,37 @@ export function conversationTag(
     const view = requestStatusView(latest.status);
     return { label: view.label, tone: view.tone };
   }
-  if (conversation.isAssistantPaused) return { label: "Requiere humano", tone: TONES.amber };
+  if (conversation.isAssistantPaused)
+    return { label: "Requiere humano", tone: TONES.amber };
   return { label: "Consulta", tone: TONES.gray };
 }
 
 // ---------------------------------------------------------------- control de la conversación
 
-function assigneeName(conversation: Pick<Conversation, "assignedUser">): string {
+function assigneeName(
+  conversation: Pick<Conversation, "assignedUser">,
+): string {
   const u = conversation.assignedUser;
-  return u ? personName(u.firstName, u.lastName, "Otra persona") : "Otra persona";
+  return u
+    ? personName(u.firstName, u.lastName, "Otra persona")
+    : "Otra persona";
 }
 
-type ControlConversation = Pick<Conversation, "isAssistantPaused" | "assignedUserId" | "assignedUser">;
+type ControlConversation = Pick<
+  Conversation,
+  "isAssistantPaused" | "assignedUserId" | "assignedUser"
+>;
 
 export interface ConversationControls {
   /** Botón Pausar/Reanudar (el mockup lo oculta cuando atiende un operador). */
   pause: { visible: boolean; paused: boolean };
   /** Botón "Pasar a humano" / "Devolver a Samanta". */
-  transfer: { visible: boolean; kind: "take" | "release"; enabled: boolean; reason: string | null };
+  transfer: {
+    visible: boolean;
+    kind: "take" | "release";
+    enabled: boolean;
+    reason: string | null;
+  };
 }
 
 /**
@@ -191,10 +249,16 @@ export function conversationControls(
 ): ConversationControls {
   const mode = conversationMode(conversation);
   const isAdmin = roles.includes("ADMIN");
-  const assignedToOther = conversation.assignedUserId !== null && conversation.assignedUserId !== meId;
-  const canAssign = can(roles, "conversation.assign") && can(roles, "conversation.pause");
+  const assignedToOther =
+    conversation.assignedUserId !== null &&
+    conversation.assignedUserId !== meId;
+  const canAssign =
+    can(roles, "conversation.assign") && can(roles, "conversation.pause");
 
-  const pause = { visible: can(roles, "conversation.pause") && mode !== "operador", paused: conversation.isAssistantPaused };
+  const pause = {
+    visible: can(roles, "conversation.pause") && mode !== "operador",
+    paused: conversation.isAssistantPaused,
+  };
 
   if (mode === "operador") {
     const enabled = canAssign && (isAdmin || !assignedToOther);
@@ -204,7 +268,9 @@ export function conversationControls(
         visible: canAssign,
         kind: "release",
         enabled,
-        reason: enabled ? null : `${assigneeName(conversation)} atiende esta conversación. Solo esa persona o un administrador puede devolverla a Samanta.`,
+        reason: enabled
+          ? null
+          : `${assigneeName(conversation)} atiende esta conversación. Solo esa persona o un administrador puede devolverla a Samanta.`,
       },
     };
   }
@@ -215,12 +281,15 @@ export function conversationControls(
       visible: canAssign,
       kind: "take",
       enabled,
-      reason: enabled ? null : `${assigneeName(conversation)} tiene asignada esta conversación.`,
+      reason: enabled
+        ? null
+        : `${assigneeName(conversation)} tiene asignada esta conversación.`,
     },
   };
 }
 
-type ComposerConversation = ControlConversation & Pick<Conversation, "channel" | "customer">;
+type ComposerConversation = ControlConversation &
+  Pick<Conversation, "channel" | "customer">;
 
 export type ComposerState =
   | {
@@ -242,24 +311,27 @@ export function composerState(
   replyWindow: { open: boolean } | null,
 ): ComposerState {
   if (!can(roles, "conversation.send")) {
-    return { enabled: false, reason: "Tu rol puede leer esta conversación, pero no responder." };
-  }
-  if (!isSendableChannel(conversation.channel)) {
-    // Instagram ya recibe mensajes en bk-crm, pero aún no se puede responder (400 «Conversación sin
-    // destinatario habilitado»). No usa sendChannelName ni windowClosedText: son textos de los canales con envío.
-    if (conversation.channel === "INSTAGRAM") {
-      return { enabled: false, reason: "Instagram por ahora solo recibe mensajes: todavía no se puede responder desde el CRM." };
-    }
     return {
       enabled: false,
-      reason: `El envío por ${channelMeta(conversation.channel).label} aún no está disponible: hoy solo WhatsApp y Messenger tienen integración.`,
+      reason: "Tu rol puede leer esta conversación, pero no responder.",
     };
   }
-  // En Messenger no hay teléfono: el backend resuelve el destinatario con el identificador de la página.
-  if (conversation.channel === "WHATSAPP" && !conversation.customer.phone) {
-    return { enabled: false, reason: "El cliente no tiene un teléfono de WhatsApp registrado." };
+  if (!isSendableChannel(conversation.channel)) {
+    return {
+      enabled: false,
+      reason: `El envío por ${channelMeta(conversation.channel).label} aún no está disponible: hoy solo WhatsApp, Messenger e Instagram tienen integración.`,
+    };
   }
-  const assignedToOther = conversation.assignedUserId !== null && conversation.assignedUserId !== meId;
+  // En Messenger e Instagram no hay teléfono: el backend resuelve el destinatario con el identificador del canal.
+  if (conversation.channel === "WHATSAPP" && !conversation.customer.phone) {
+    return {
+      enabled: false,
+      reason: "El cliente no tiene un teléfono de WhatsApp registrado.",
+    };
+  }
+  const assignedToOther =
+    conversation.assignedUserId !== null &&
+    conversation.assignedUserId !== meId;
   if (assignedToOther && !roles.includes("ADMIN")) {
     return {
       enabled: false,
@@ -290,26 +362,34 @@ export function composerState(
  * Mensaje claro para un envío fallido, según el canal. Con la misma clave de idempotencia se puede reintentar
  * sin duplicar. Un 503 sin `code` es el canal apagado en el servidor, no una falta de conexión.
  */
-export function sendErrorText(error: unknown, channel: ContactChannel = "WHATSAPP"): string {
+export function sendErrorText(
+  error: unknown,
+  channel: ContactChannel = "WHATSAPP",
+): string {
   if (error instanceof ApiError) {
     const text = error.messages.join(" ");
     if (isConnectionError(error)) {
       return "No se pudo confirmar el envío por un problema de conexión. Puedes reintentar: el mensaje no se duplicará.";
     }
-    if (isDisabledInServer(error)) return `El envío por ${sendChannelName(channel)} no está habilitado en el servidor.`;
-    if (error.status === 409 && /ventana/i.test(text)) return windowClosedText(channel);
+    if (isDisabledInServer(error))
+      return `El envío por ${sendChannelName(channel)} no está habilitado en el servidor.`;
+    if (error.status === 409 && /ventana/i.test(text))
+      return windowClosedText(channel);
     if (error.status === 409 && /Idempotency/i.test(text)) {
       return "Este envío ya se había registrado con otro texto. Vuelve a enviarlo.";
     }
     if (error.status === 400 && /destinatario/i.test(text)) {
-      return channel === "FACEBOOK"
-        ? "No se puede responder a este cliente por Messenger: no tiene un destinatario habilitado."
+      return channel === "FACEBOOK" || channel === "INSTAGRAM"
+        ? `No se puede responder a este cliente por ${sendChannelName(channel)}: no tiene un destinatario habilitado.`
         : "El cliente no tiene un número de WhatsApp válido.";
     }
-    if (error.isForbidden) return "Tu rol no puede enviar mensajes en esta conversación.";
+    if (error.isForbidden)
+      return "Tu rol no puede enviar mensajes en esta conversación.";
     return text;
   }
-  return error instanceof Error ? error.message : "No se pudo enviar el mensaje.";
+  return error instanceof Error
+    ? error.message
+    : "No se pudo enviar el mensaje.";
 }
 
 // ---------------------------------------------------------------- panel del cliente
@@ -332,17 +412,32 @@ export function buildHistory(
   currentRequestId: string | null,
   max = 6,
 ): HistoryItem[] {
-  const fromRequests = new Set(reservations.map((r) => r.reservationRequestId).filter(Boolean));
+  const fromRequests = new Set(
+    reservations.map((r) => r.reservationRequestId).filter(Boolean),
+  );
   const items: HistoryItem[] = [];
   for (const r of reservations) {
-    if (currentRequestId && r.reservationRequestId === currentRequestId) continue;
+    if (currentRequestId && r.reservationRequestId === currentRequestId)
+      continue;
     const status = RESERVATION_STATUS[r.status];
-    items.push({ key: `res-${r.id}`, code: r.code, at: r.reservationAt, label: status.label, tone: status.tone });
+    items.push({
+      key: `res-${r.id}`,
+      code: r.code,
+      at: r.reservationAt,
+      label: status.label,
+      tone: status.tone,
+    });
   }
   for (const r of requests) {
     if (r.id === currentRequestId || fromRequests.has(r.id)) continue;
     const view = requestStatusView(r.status);
-    items.push({ key: `req-${r.id}`, code: r.code, at: r.reservationAt ?? r.createdAt, label: view.label, tone: view.tone });
+    items.push({
+      key: `req-${r.id}`,
+      code: r.code,
+      at: r.reservationAt ?? r.createdAt,
+      label: view.label,
+      tone: view.tone,
+    });
   }
   return items.sort((a, b) => b.at.localeCompare(a.at)).slice(0, max);
 }

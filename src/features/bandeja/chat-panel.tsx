@@ -1,21 +1,43 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import { ApiError, newIdempotencyKey } from "@/lib/api/client";
 import { conversationsApi } from "@/lib/api/endpoints";
 import type { Conversation, Message } from "@/lib/api/types";
-import { isSendableChannel, OUTBOUND_CONTENT_MAX_LENGTH } from "@/lib/api/types";
+import {
+  isSendableChannel,
+  OUTBOUND_CONTENT_MAX_LENGTH,
+} from "@/lib/api/types";
 import { useSession } from "@/lib/auth/session";
 import { channelMeta } from "@/lib/domain/channels";
-import { conversationMode, customerInitials, customerName, messageAuthor, messageText, MODE_META } from "@/lib/domain/conversation";
+import {
+  conversationMode,
+  customerInitials,
+  customerName,
+  messageAuthor,
+  messageText,
+  MODE_META,
+} from "@/lib/domain/conversation";
 import { formatAgoShort, formatMessageTime } from "@/lib/format/dates";
 import { cn, personName } from "@/lib/format/text";
 import { useNow } from "@/lib/hooks/use-now";
 import { useRestaurant } from "@/lib/restaurant";
 import { ChevronLeft } from "lucide-react";
 import { Avatar, Button, Panel } from "@/components/ui/primitives";
-import { EmptyState, ErrorState, InlineNotice, LoadingState } from "@/components/ui/state";
+import {
+  EmptyState,
+  ErrorState,
+  InlineNotice,
+  LoadingState,
+} from "@/components/ui/state";
 import {
   composerState,
   conversationControls,
@@ -27,10 +49,18 @@ import {
   sendErrorText,
   type ComposerState,
 } from "./inbox-utils";
-import { replyMaxLength } from "./channel-utils";
+import { replyMaxBytes, replyMaxLength, utf8Length } from "./channel-utils";
 import { SamantaPanel } from "./samanta-panel";
-import { actionErrorText, SendFailedError, useConversationActions } from "./use-conversation-actions";
-import { storeConversationRead, useConversationMessages, useInvalidateInbox } from "./use-inbox";
+import {
+  actionErrorText,
+  SendFailedError,
+  useConversationActions,
+} from "./use-conversation-actions";
+import {
+  storeConversationRead,
+  useConversationMessages,
+  useInvalidateInbox,
+} from "./use-inbox";
 import { samantaMessageIds, useAssistantDrafts } from "./use-samanta";
 
 /** Panel central: cabecera con el modo de atención, historial y cuadro de texto. */
@@ -60,12 +90,16 @@ export function ChatPanel({
   if (!selected) {
     return (
       <Panel as="main" className="grid place-items-center">
-        <EmptyState>Selecciona una conversación para ver sus mensajes.</EmptyState>
+        <EmptyState>
+          Selecciona una conversación para ver sus mensajes.
+        </EmptyState>
       </Panel>
     );
   }
   if (!conversation) {
-    const notFound = invalid || (error instanceof ApiError && (error.isNotFound || error.status === 400));
+    const notFound =
+      invalid ||
+      (error instanceof ApiError && (error.isNotFound || error.status === 400));
     return (
       <Panel as="main" className="flex min-h-0 flex-col">
         {onBack ? (
@@ -77,20 +111,39 @@ export function ChatPanel({
           {isLoading ? (
             <LoadingState label="Cargando conversación…" />
           ) : notFound ? (
-            <EmptyState>No se encontró la conversación. Puede que el enlace no sea válido.</EmptyState>
+            <EmptyState>
+              No se encontró la conversación. Puede que el enlace no sea válido.
+            </EmptyState>
           ) : (
-            <ErrorState error={error} subject="la conversación" onRetry={onRetry} />
+            <ErrorState
+              error={error}
+              subject="la conversación"
+              onRetry={onRetry}
+            />
           )}
         </div>
       </Panel>
     );
   }
   // La clave reinicia el borrador y el desplazamiento al cambiar de conversación.
-  return <ChatConversation key={conversation.id} conversation={conversation} onBack={onBack} onShowCustomer={onShowCustomer} />;
+  return (
+    <ChatConversation
+      key={conversation.id}
+      conversation={conversation}
+      onBack={onBack}
+      onShowCustomer={onShowCustomer}
+    />
+  );
 }
 
 /** «‹ Conversaciones»: vuelve a la lista en la Bandeja de una sola columna. */
-function BackButton({ onClick, withLabel = false }: { onClick: () => void; withLabel?: boolean }) {
+function BackButton({
+  onClick,
+  withLabel = false,
+}: {
+  onClick: () => void;
+  withLabel?: boolean;
+}) {
   return (
     <button
       type="button"
@@ -121,10 +174,17 @@ function ChatConversation({
   const history = useConversationMessages(conversation.id);
   const actions = useConversationActions(conversation, meId);
   const drafts = useAssistantDrafts(conversation);
-  const samantaIds = useMemo(() => samantaMessageIds(drafts.data?.data), [drafts.data]);
+  const samantaIds = useMemo(
+    () => samantaMessageIds(drafts.data?.data),
+    [drafts.data],
+  );
   const [actionError, setActionError] = useState<string | null>(null);
 
-  useMarkAsRead(conversation, history.messages, session.can("conversation.read"));
+  useMarkAsRead(
+    conversation,
+    history.messages,
+    session.can("conversation.read"),
+  );
 
   const name = customerName(conversation.customer, conversation.channel);
   const ch = channelMeta(conversation.channel);
@@ -132,8 +192,15 @@ function ChatConversation({
   const controls = conversationControls(conversation, meId, session.roles);
   // Ventana de 24 h estimada en los dos canales con envío (WhatsApp y Messenger); el backend manda.
   const replyWindow =
-    isSendableChannel(conversation.channel) && history.messages.length > 0 ? estimateReplyWindow(history.messages, now) : null;
-  const composer = composerState(conversation, meId, session.roles, history.isLoading ? null : replyWindow);
+    isSendableChannel(conversation.channel) && history.messages.length > 0
+      ? estimateReplyWindow(history.messages, now)
+      : null;
+  const composer = composerState(
+    conversation,
+    meId,
+    session.roles,
+    history.isLoading ? null : replyWindow,
+  );
 
   const run = async (action: Parameters<typeof actions.mutateAsync>[0]) => {
     setActionError(null);
@@ -145,7 +212,11 @@ function ChatConversation({
   };
 
   return (
-    <Panel as="main" className="flex min-h-0 flex-col overflow-hidden" aria-label={`Conversación con ${name}`}>
+    <Panel
+      as="main"
+      className="flex min-h-0 flex-col overflow-hidden"
+      aria-label={`Conversación con ${name}`}
+    >
       {/* Si no caben en una línea, el modo y los botones bajan a una segunda fila. */}
       <header className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-3 sm:px-4.5 sm:py-3.5">
         {onBack ? <BackButton onClick={onBack} /> : null}
@@ -156,14 +227,23 @@ function ChatConversation({
             <span>{ch.label}</span>
             {lastInbound !== null ? (
               <>
-                <span className="size-0.75 shrink-0 rounded-full bg-dot" aria-hidden="true" />
-                <span title="Último mensaje del cliente">Activo {formatAgoShort(lastInbound, now, timeZone)}</span>
+                <span
+                  className="size-0.75 shrink-0 rounded-full bg-dot"
+                  aria-hidden="true"
+                />
+                <span title="Último mensaje del cliente">
+                  Activo {formatAgoShort(lastInbound, now, timeZone)}
+                </span>
               </>
             ) : null}
           </div>
         </div>
         {onShowCustomer ? (
-          <Button variant="outline" className="h-8.5 shrink-0 px-3 xl:hidden" onClick={onShowCustomer}>
+          <Button
+            variant="outline"
+            className="h-8.5 shrink-0 px-3 xl:hidden"
+            onClick={onShowCustomer}
+          >
             Cliente
           </Button>
         ) : null}
@@ -174,7 +254,9 @@ function ChatConversation({
               variant="outline"
               className="h-8.5 shrink-0 px-3.5"
               disabled={actions.isPending}
-              onClick={() => void run({ kind: "pause", paused: !controls.pause.paused })}
+              onClick={() =>
+                void run({ kind: "pause", paused: !controls.pause.paused })
+              }
             >
               {controls.pause.paused ? "Reanudar" : "Pausar"}
             </Button>
@@ -187,7 +269,9 @@ function ChatConversation({
               title={controls.transfer.reason ?? undefined}
               onClick={() => void run({ kind: controls.transfer.kind })}
             >
-              {controls.transfer.kind === "take" ? "Pasar a humano" : "Devolver a Samanta"}
+              {controls.transfer.kind === "take"
+                ? "Pasar a humano"
+                : "Devolver a Samanta"}
             </Button>
           ) : null}
         </div>
@@ -208,9 +292,17 @@ function ChatConversation({
         samantaIds={samantaIds}
       />
 
-      <SamantaPanel conversation={conversation} messages={history.messages} drafts={drafts} />
+      <SamantaPanel
+        conversation={conversation}
+        messages={history.messages}
+        drafts={drafts}
+      />
 
-      <Composer conversation={conversation} state={composer} actions={actions} />
+      <Composer
+        conversation={conversation}
+        state={composer}
+        actions={actions}
+      />
     </Panel>
   );
 }
@@ -219,7 +311,11 @@ function ModePill({ conversation }: { conversation: Conversation }) {
   const mode = conversationMode(conversation);
   const meta = MODE_META[mode];
   const holder = conversation.assignedUser
-    ? personName(conversation.assignedUser.firstName, conversation.assignedUser.lastName, "")
+    ? personName(
+        conversation.assignedUser.firstName,
+        conversation.assignedUser.lastName,
+        "",
+      )
     : "";
   return (
     <div
@@ -227,10 +323,16 @@ function ModePill({ conversation }: { conversation: Conversation }) {
       style={{ background: meta.bg, color: meta.fg }}
       title={holder ? `Responsable: ${holder}` : undefined}
     >
-      <span className="size-1.75 rounded-full" style={{ background: meta.dot }} aria-hidden="true" />
+      <span
+        className="size-1.75 rounded-full"
+        style={{ background: meta.dot }}
+        aria-hidden="true"
+      />
       <span>
         {meta.label}
-        {mode === "operador" && holder ? <span className="sr-only">: {holder}</span> : null}
+        {mode === "operador" && holder ? (
+          <span className="sr-only">: {holder}</span>
+        ) : null}
       </span>
     </div>
   );
@@ -242,7 +344,11 @@ function ModePill({ conversation }: { conversation: Conversation }) {
  * Lectura compartida del equipo: al ver el chat se marcan como leídos los mensajes del cliente hasta
  * el último visible (con una espera de 500 ms). OWNER no puede marcar (403): no se llama.
  */
-function useMarkAsRead(conversation: Conversation, messages: Message[], allowed: boolean) {
+function useMarkAsRead(
+  conversation: Conversation,
+  messages: Message[],
+  allowed: boolean,
+) {
   const queryClient = useQueryClient();
   const invalidate = useInvalidateInbox();
   const marked = useRef<string | null>(null);
@@ -313,7 +419,9 @@ function MessageList({
 
   const onScroll = () => {
     const el = scroller.current;
-    if (el) nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (el)
+      nearBottom.current =
+        el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   };
 
   const loadOlder = () => {
@@ -330,13 +438,24 @@ function MessageList({
       role="log"
       aria-label="Mensajes"
     >
-      {history.stale ? <InlineNotice tone="warning">Sin conexión: los mensajes pueden no estar al día.</InlineNotice> : null}
+      {history.stale ? (
+        <InlineNotice tone="warning">
+          Sin conexión: los mensajes pueden no estar al día.
+        </InlineNotice>
+      ) : null}
       {history.isLoading ? (
         <LoadingState label="Cargando mensajes…" className="my-auto" />
       ) : history.error && history.messages.length === 0 ? (
-        <ErrorState error={history.error} subject="los mensajes" onRetry={() => void history.refetch()} className="my-auto" />
+        <ErrorState
+          error={history.error}
+          subject="los mensajes"
+          onRetry={() => void history.refetch()}
+          className="my-auto"
+        />
       ) : history.messages.length === 0 ? (
-        <EmptyState className="my-auto">Aún no hay mensajes en esta conversación.</EmptyState>
+        <EmptyState className="my-auto">
+          Aún no hay mensajes en esta conversación.
+        </EmptyState>
       ) : (
         <>
           {history.hasOlder ? (
@@ -347,10 +466,14 @@ function MessageList({
                 disabled={history.loadingOlder}
                 className="h-7 cursor-pointer rounded-full border border-button bg-white px-3 text-xs font-semibold text-brand hover:bg-brand-soft disabled:opacity-60"
               >
-                {history.loadingOlder ? "Cargando…" : "Cargar mensajes anteriores"}
+                {history.loadingOlder
+                  ? "Cargando…"
+                  : "Cargar mensajes anteriores"}
               </button>
               {history.olderError ? (
-                <span className="text-xs text-[#b42323]">No se pudieron cargar los mensajes anteriores.</span>
+                <span className="text-xs text-[#b42323]">
+                  No se pudieron cargar los mensajes anteriores.
+                </span>
               ) : null}
             </div>
           ) : null}
@@ -371,7 +494,11 @@ function MessageList({
   );
 }
 
-const STATUS_CLASS = { muted: "", warning: "font-semibold text-[#b14a0b]", error: "font-semibold text-[#b42323]" } as const;
+const STATUS_CLASS = {
+  muted: "",
+  warning: "font-semibold text-[#b14a0b]",
+  error: "font-semibold text-[#b42323]",
+} as const;
 
 function Bubble({
   message: m,
@@ -412,7 +539,9 @@ function Bubble({
       <div
         className={cn(
           "whitespace-pre-wrap wrap-break-word rounded-[16px_4px_16px_16px] px-3.5 py-2.5 text-sm leading-[1.45] text-pretty",
-          author === "samanta" ? "bg-brand-bubble text-ink" : "bg-brand text-white",
+          author === "samanta"
+            ? "bg-brand-bubble text-ink"
+            : "bg-brand text-white",
         )}
       >
         {text}
@@ -421,7 +550,9 @@ function Bubble({
         <span className="whitespace-nowrap">
           {outboundAuthorLabel(m, meId, assignee, samantaIds)} · {time}
         </span>
-        {status ? <span className={STATUS_CLASS[status.tone]}>· {status.text}</span> : null}
+        {status ? (
+          <span className={STATUS_CLASS[status.tone]}>· {status.text}</span>
+        ) : null}
       </div>
     </div>
   );
@@ -455,10 +586,13 @@ function Composer({
     el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA_PX)}px`;
   };
 
+  const maxBytes = replyMaxBytes(conversation.channel);
   const submit = async () => {
     const content = draft.trim();
     if (!content || !state.enabled || sending) return;
-    if (pendingKey.current?.content !== content) pendingKey.current = { content, key: newIdempotencyKey() };
+    if (maxBytes !== null && utf8Length(content) > maxBytes) return;
+    if (pendingKey.current?.content !== content)
+      pendingKey.current = { content, key: newIdempotencyKey() };
     setSending(true);
     setError(null);
     setWarning(null);
@@ -474,7 +608,11 @@ function Composer({
       requestAnimationFrame(resize);
       if (result.warning) setWarning(result.warning);
     } catch (failure) {
-      setError(failure instanceof SendFailedError ? sendErrorText(failure.reason, conversation.channel) : actionErrorText(failure));
+      setError(
+        failure instanceof SendFailedError
+          ? sendErrorText(failure.reason, conversation.channel)
+          : actionErrorText(failure),
+      );
     } finally {
       setSending(false);
     }
@@ -488,14 +626,22 @@ function Composer({
   };
 
   const hint = state.enabled ? state.notice : state.reason;
-  // Tope por canal (content.length): 4096 en WhatsApp y 2000 en Messenger.
-  const maxLength = replyMaxLength(conversation.channel) ?? OUTBOUND_CONTENT_MAX_LENGTH;
-  const nearLimit = draft.length > maxLength - 300;
+  // Tope por canal (content.length): 4096 en WhatsApp, 2000 en Messenger y 1000 en Instagram. Instagram además
+  // admite 1000 bytes UTF-8, que es lo que manda: las tildes ocupan 2 y los emojis 4.
+  const maxLength =
+    replyMaxLength(conversation.channel) ?? OUTBOUND_CONTENT_MAX_LENGTH;
+  const bytes = maxBytes === null ? 0 : utf8Length(draft.trim());
+  const overBytes = maxBytes !== null && bytes > maxBytes;
+  const nearLimit =
+    maxBytes === null ? draft.length > maxLength - 300 : bytes > maxBytes - 300;
 
   return (
     <div className="flex flex-col gap-2 border-t border-line px-3 py-3 sm:px-5.5 sm:py-3.5">
       {hint ? (
-        <div className="text-xs text-muted" id={`composer-hint-${conversation.id}`}>
+        <div
+          className="text-xs text-muted"
+          id={`composer-hint-${conversation.id}`}
+        >
           {hint}
         </div>
       ) : null}
@@ -521,20 +667,32 @@ function Composer({
           maxLength={maxLength}
           placeholder="Escribe un mensaje"
           aria-label="Mensaje"
-          aria-describedby={hint ? `composer-hint-${conversation.id}` : undefined}
+          aria-describedby={
+            hint ? `composer-hint-${conversation.id}` : undefined
+          }
           className="h-11 min-w-0 flex-1 resize-none rounded-xl border border-field bg-white px-3.5 py-2.75 text-sm leading-[1.45] text-ink outline-none placeholder:text-faint focus:border-brand disabled:cursor-not-allowed disabled:bg-surface"
         />
         <button
           type="submit"
-          disabled={!state.enabled || sending || draft.trim() === ""}
+          disabled={
+            !state.enabled || sending || draft.trim() === "" || overBytes
+          }
           className="h-11 shrink-0 cursor-pointer rounded-xl border-0 bg-brand px-5 text-sm font-bold text-white hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-60"
         >
           {sending ? "Enviando…" : "Enviar"}
         </button>
       </form>
+      {overBytes ? (
+        <InlineNotice tone="error">
+          Instagram admite hasta {maxBytes} bytes por respuesta: las tildes y
+          los emojis ocupan más de uno.
+        </InlineNotice>
+      ) : null}
       {nearLimit ? (
         <div className="text-right text-[11px] text-subtle">
-          {draft.length}/{maxLength}
+          {maxBytes === null
+            ? `${draft.length}/${maxLength}`
+            : `${bytes}/${maxBytes} bytes`}
         </div>
       ) : null}
     </div>

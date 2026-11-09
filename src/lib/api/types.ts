@@ -22,13 +22,29 @@ export type MoneyString = string;
 
 export type RoleCode = "ADMIN" | "OWNER" | "OPERATOR" | "SUPPORT";
 
-export const CONTACT_CHANNELS = ["WHATSAPP", "FACEBOOK", "INSTAGRAM", "WEBSITE", "PHONE", "EMAIL", "OTHER"] as const;
+export const CONTACT_CHANNELS = [
+  "WHATSAPP",
+  "FACEBOOK",
+  "INSTAGRAM",
+  "WEBSITE",
+  "PHONE",
+  "EMAIL",
+  "OTHER",
+] as const;
 export type ContactChannel = (typeof CONTACT_CHANNELS)[number];
 
 export type CurrencyCode = "PEN" | "USD";
 export const LANGUAGE_CODES = ["ES", "EN", "PT"] as const;
 export type LanguageCode = (typeof LANGUAGE_CODES)[number];
-export const DAYS_OF_WEEK = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"] as const;
+export const DAYS_OF_WEEK = [
+  "MONDAY",
+  "TUESDAY",
+  "WEDNESDAY",
+  "THURSDAY",
+  "FRIDAY",
+  "SATURDAY",
+  "SUNDAY",
+] as const;
 export type DayOfWeek = (typeof DAYS_OF_WEEK)[number];
 
 export interface Pagination {
@@ -48,7 +64,8 @@ export interface Paginated<T> {
 export const MAX_PAGE_SIZE = 100;
 
 /** `code` que añade el BFF de este frontend; bk-crm nunca lo envía. */
-export type BffErrorCode = "NO_SESSION" | "SESSION_EXPIRED" | "BACKEND_UNAVAILABLE";
+export type BffErrorCode =
+  "NO_SESSION" | "SESSION_EXPIRED" | "BACKEND_UNAVAILABLE";
 
 /**
  * Cuerpo de error de bk-crm o de un handler del BFF.
@@ -228,7 +245,13 @@ export interface PutRestaurantConfigRequest {
 // Catálogo comercial ("servicios")
 // ---------------------------------------------------------------------------
 
-export const COMMERCIAL_ITEM_TYPES = ["DISH", "BEVERAGE", "SERVICE", "PROMOTION", "EVENT"] as const;
+export const COMMERCIAL_ITEM_TYPES = [
+  "DISH",
+  "BEVERAGE",
+  "SERVICE",
+  "PROMOTION",
+  "EVENT",
+] as const;
 export type CommercialItemType = (typeof COMMERCIAL_ITEM_TYPES)[number];
 export type CommercialApprovalStatus = "DRAFT" | "APPROVED" | "REJECTED";
 
@@ -403,7 +426,8 @@ export const RESERVATION_REQUEST_STATUSES = [
   "RENEGOTIATING",
   "CANCELLED",
 ] as const;
-export type ReservationRequestStatus = (typeof RESERVATION_REQUEST_STATUSES)[number];
+export type ReservationRequestStatus =
+  (typeof RESERVATION_REQUEST_STATUSES)[number];
 
 export interface ReservationRequest {
   id: Uuid;
@@ -539,7 +563,9 @@ export interface UpdateReservationStatusBody {
 }
 
 /** Transiciones permitidas por PATCH /reservations/:id/status (reservation-rules.ts). */
-export const RESERVATION_STATUS_TRANSITIONS: Readonly<Record<ReservationStatus, readonly ReservationStatusTarget[]>> = {
+export const RESERVATION_STATUS_TRANSITIONS: Readonly<
+  Record<ReservationStatus, readonly ReservationStatusTarget[]>
+> = {
   CONFIRMED: ["UPCOMING", "IN_SERVICE", "CANCELLED", "NO_SHOW"],
   UPCOMING: ["IN_SERVICE", "CANCELLED", "NO_SHOW"],
   RESCHEDULED: ["CONFIRMED", "UPCOMING", "IN_SERVICE", "CANCELLED", "NO_SHOW"],
@@ -554,8 +580,10 @@ export const RESERVATION_STATUS_TRANSITIONS: Readonly<Record<ReservationStatus, 
 // ---------------------------------------------------------------------------
 
 export type MessageDirection = "INBOUND" | "OUTBOUND";
-export type InboundMessageStatus = "RECEIVED" | "PROCESSING" | "PROCESSED" | "FAILED";
-export type OutboundMessageStatus = "QUEUED" | "SENDING" | "SENT" | "DELIVERED" | "READ" | "UNKNOWN" | "FAILED";
+export type InboundMessageStatus =
+  "RECEIVED" | "PROCESSING" | "PROCESSED" | "FAILED";
+export type OutboundMessageStatus =
+  "QUEUED" | "SENDING" | "SENT" | "DELIVERED" | "READ" | "UNKNOWN" | "FAILED";
 export type MessageStatus = InboundMessageStatus | OutboundMessageStatus;
 export type MessageType = "TEXT" | "IMAGE" | "FILE" | "OTHER";
 
@@ -719,7 +747,11 @@ export interface HealthResponse {
 /** GET /api/listo (handler del BFF): 200 si bk-crm responde GET /health con 2xx (o en modo mock); 503 si no. */
 export type ReadyResponse =
   | { estado: "ok"; backend: "disponible" | "simulado" }
-  | { estado: "error"; backend: string; motivo?: "timeout" | "network" | "error" };
+  | {
+      estado: "error";
+      backend: string;
+      motivo?: "timeout" | "network" | "error";
+    };
 
 /** 200 de POST /api/auth/login (además fija las cookies httpOnly crm_at y crm_rt). */
 export interface BffLoginResponse {
@@ -742,7 +774,8 @@ export const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 /** WhatsApp del negocio en E.164. */
 export const E164_PATTERN = /^\+[1-9]\d{7,14}$/;
 /** Instantes de entrada (body y query): segundos y zona obligatorios, hasta 3 decimales. */
-export const ISO_INSTANT_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
+export const ISO_INSTANT_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
 
 /** Criterio de orden de GET /commercial-items. */
 export type CommercialItemSortField = "category" | "name" | "createdAt";
@@ -767,7 +800,8 @@ export interface CreateCommercialCategoryRequest {
  * Body de PATCH /commercial-categories/:id. Al menos un campo. Omitido = se conserva;
  * null = se borra (salvo displayOrder). Debe quedar al menos un nombre.
  */
-export type UpdateCommercialCategoryRequest = Partial<CreateCommercialCategoryRequest>;
+export type UpdateCommercialCategoryRequest =
+  Partial<CreateCommercialCategoryRequest>;
 
 /** Body de PATCH /commercial-categories/:id/status. */
 export interface UpdateCommercialCategoryStatusRequest {
@@ -887,7 +921,12 @@ export interface CommercialItemFaqInput {
 /** Disponibilidad de un día: horas distintas (pueden cruzar la medianoche) o no disponible sin horas. */
 export type CommercialItemScheduleInput =
   | { dayOfWeek: DayOfWeek; isAvailable: true; startTime: HhMm; endTime: HhMm }
-  | { dayOfWeek: DayOfWeek; isAvailable: false; startTime?: null; endTime?: null };
+  | {
+      dayOfWeek: DayOfWeek;
+      isAvailable: false;
+      startTime?: null;
+      endTime?: null;
+    };
 
 /** Detalle de promoción (solo type PROMOTION). Un objeto sustituye los 3 campos. */
 export interface CommercialPromotionDetailInput {
@@ -999,10 +1038,8 @@ export interface CreateCustomerInterestRequest {
 }
 
 /** Estados en los que la solicitud admite edición y cancelación. */
-export const RESERVATION_REQUEST_EDITABLE_STATUSES: readonly ReservationRequestStatus[] = [
-  "INCOMPLETE_DATA",
-  "READY_TO_SEND",
-];
+export const RESERVATION_REQUEST_EDITABLE_STATUSES: readonly ReservationRequestStatus[] =
+  ["INCOMPLETE_DATA", "READY_TO_SEND"];
 
 /** Body de POST /reservation-requests. */
 export interface CreateReservationRequestBody {
@@ -1039,10 +1076,15 @@ export interface UpdateReservationRequestBody {
 }
 
 /** Destinos que además exigen reservationAt <= ahora (reloj del servidor); si no, 409. */
-export const RESERVATION_STATUSES_REQUIRING_ARRIVAL: readonly ReservationStatusTarget[] = ["IN_SERVICE", "NO_SHOW"];
+export const RESERVATION_STATUSES_REQUIRING_ARRIVAL: readonly ReservationStatusTarget[] =
+  ["IN_SERVICE", "NO_SHOW"];
 
 /** Estados que admiten PATCH /reservations/:id y PATCH /reservations/:id/reschedule. */
-export const RESERVATION_EDITABLE_STATUSES: readonly ReservationStatus[] = ["CONFIRMED", "UPCOMING", "RESCHEDULED"];
+export const RESERVATION_EDITABLE_STATUSES: readonly ReservationStatus[] = [
+  "CONFIRMED",
+  "UPCOMING",
+  "RESCHEDULED",
+];
 
 /** Estados que admiten PATCH /reservations/:id/assignee. */
 export const RESERVATION_ASSIGNABLE_STATUSES: readonly ReservationStatus[] = [
@@ -1053,7 +1095,11 @@ export const RESERVATION_ASSIGNABLE_STATUSES: readonly ReservationStatus[] = [
 ];
 
 /** Estados finales: no admiten cambio de estado, edición, reprogramación ni responsable. Sí observaciones. */
-export const RESERVATION_FINAL_STATUSES: readonly ReservationStatus[] = ["COMPLETED", "CANCELLED", "NO_SHOW"];
+export const RESERVATION_FINAL_STATUSES: readonly ReservationStatus[] = [
+  "COMPLETED",
+  "CANCELLED",
+  "NO_SHOW",
+];
 
 /** true si PATCH /reservations/:id/status aceptaría `target` ahora (el mismo estado siempre responde 200). */
 export function canSetReservationStatus(
@@ -1062,8 +1108,12 @@ export function canSetReservationStatus(
   now: Date = new Date(),
 ): boolean {
   if (reservation.status === target) return true;
-  if (!RESERVATION_STATUS_TRANSITIONS[reservation.status].includes(target)) return false;
-  return !RESERVATION_STATUSES_REQUIRING_ARRIVAL.includes(target) || Date.parse(reservation.reservationAt) <= now.getTime();
+  if (!RESERVATION_STATUS_TRANSITIONS[reservation.status].includes(target))
+    return false;
+  return (
+    !RESERVATION_STATUSES_REQUIRING_ARRIVAL.includes(target) ||
+    Date.parse(reservation.reservationAt) <= now.getTime()
+  );
 }
 
 /** Body de POST /reservations (solo ADMIN). Siempre crea la reserva en CONFIRMED. */
@@ -1114,18 +1164,37 @@ export interface RescheduleReservationBody {
 // ---------------------------------------------------------------------------
 
 /** Canales en los que bk-crm puede enviar (tienen transporte registrado). */
-export type SendableChannel = Extract<ContactChannel, "WHATSAPP" | "FACEBOOK">;
-export const SENDABLE_CHANNELS: readonly SendableChannel[] = ["WHATSAPP", "FACEBOOK"];
+export type SendableChannel = Extract<
+  ContactChannel,
+  "WHATSAPP" | "FACEBOOK" | "INSTAGRAM"
+>;
+export const SENDABLE_CHANNELS: readonly SendableChannel[] = [
+  "WHATSAPP",
+  "FACEBOOK",
+  "INSTAGRAM",
+];
 
 /** Acota un ContactChannel a los canales con envío. */
-export function isSendableChannel(channel: ContactChannel): channel is SendableChannel {
+export function isSendableChannel(
+  channel: ContactChannel,
+): channel is SendableChannel {
   return (SENDABLE_CHANNELS as readonly ContactChannel[]).includes(channel);
 }
 
 /** Máximo de content.length (unidades UTF-16, igual que String.length) por canal. */
-export const OUTBOUND_TEXT_MAX_LENGTH: Readonly<Record<SendableChannel, number>> = {
+export const OUTBOUND_TEXT_MAX_LENGTH: Readonly<
+  Record<SendableChannel, number>
+> = {
   WHATSAPP: 4096,
   FACEBOOK: 2000,
+  INSTAGRAM: 1000,
+};
+
+/** Instagram además limita los bytes UTF-8 (1000): las tildes ocupan 2 y los emojis 4. */
+export const OUTBOUND_TEXT_MAX_BYTES: Readonly<
+  Partial<Record<SendableChannel, number>>
+> = {
+  INSTAGRAM: 1000,
 };
 
 /** Prefijo reservado: el backend usa "samanta-<draftId>" al aprobar un borrador. */
@@ -1140,7 +1209,10 @@ export type InboundMessageErrorCode =
   /** FAILED: se agotaron los 5 intentos de procesamiento. */
   | "MESSAGE_ATTEMPTS_EXHAUSTED";
 
-/** Códigos de `Message.errorCode` en mensajes salientes (prefijo WHATSAPP_ o MESSENGER_). */
+/**
+ * Códigos de `Message.errorCode` en mensajes salientes (prefijo WHATSAPP_, MESSENGER_ o INSTAGRAM_).
+ * Instagram no informa entregas: nunca llega a DELIVERED ni tiene DELIVERY_FAILED.
+ */
 export type OutboundMessageErrorCode =
   | "WHATSAPP_RATE_LIMITED"
   | "WHATSAPP_SEND_UNKNOWN"
@@ -1148,22 +1220,38 @@ export type OutboundMessageErrorCode =
   | "WHATSAPP_WINDOW_CLOSED"
   | "WHATSAPP_SEND_REJECTED"
   | "WHATSAPP_DELIVERY_FAILED"
+  /** FAILED: una plantilla pasó más de 6 h en cola sin poder enviarse. */
+  | "WHATSAPP_TEMPLATE_EXPIRED"
   | "MESSENGER_RATE_LIMITED"
   | "MESSENGER_SEND_UNKNOWN"
   | "MESSENGER_SEND_INVALID"
   | "MESSENGER_WINDOW_CLOSED"
   | "MESSENGER_SEND_REJECTED"
-  | "MESSENGER_DELIVERY_FAILED";
+  | "MESSENGER_DELIVERY_FAILED"
+  | "INSTAGRAM_RATE_LIMITED"
+  | "INSTAGRAM_SEND_UNKNOWN"
+  | "INSTAGRAM_SEND_INVALID"
+  | "INSTAGRAM_WINDOW_CLOSED"
+  | "INSTAGRAM_SEND_REJECTED";
 
-export type MessageErrorCode = InboundMessageErrorCode | OutboundMessageErrorCode;
+export type MessageErrorCode =
+  InboundMessageErrorCode | OutboundMessageErrorCode;
 
 /** APPROVED, REJECTED, STALE y FAILED son finales. */
-export type SamantaDraftStatus = "GENERATING" | "READY" | "APPROVED" | "REJECTED" | "STALE" | "FAILED";
+export type SamantaDraftStatus =
+  "GENERATING" | "READY" | "APPROVED" | "REJECTED" | "STALE" | "FAILED";
 
-export const SAMANTA_DRAFT_FINAL_STATUSES: readonly SamantaDraftStatus[] = ["APPROVED", "REJECTED", "STALE", "FAILED"];
+export const SAMANTA_DRAFT_FINAL_STATUSES: readonly SamantaDraftStatus[] = [
+  "APPROVED",
+  "REJECTED",
+  "STALE",
+  "FAILED",
+];
 
 /** Acciones que admite cada estado (todas exigen la `revision` actual). */
-export const SAMANTA_DRAFT_ACTIONS: Readonly<Record<SamantaDraftStatus, readonly ("edit" | "approve" | "reject")[]>> = {
+export const SAMANTA_DRAFT_ACTIONS: Readonly<
+  Record<SamantaDraftStatus, readonly ("edit" | "approve" | "reject")[]>
+> = {
   GENERATING: [],
   READY: ["edit", "approve", "reject"],
   APPROVED: [],
@@ -1173,7 +1261,8 @@ export const SAMANTA_DRAFT_ACTIONS: Readonly<Record<SamantaDraftStatus, readonly
 };
 
 /** Intención que detecta la IA. */
-export type SamantaIntent = "GENERAL" | "RESERVATION" | "CANCELLATION" | "HUMAN" | "OTHER";
+export type SamantaIntent =
+  "GENERAL" | "RESERVATION" | "CANCELLATION" | "HUMAN" | "OTHER";
 
 /** Códigos de error de un borrador FAILED. */
 export type SamantaErrorCode =
