@@ -11,6 +11,9 @@ const devOrigins = (process.env.CRM_DEV_ORIGINS ?? "")
   .filter(Boolean);
 
 const nextConfig: NextConfig = {
+  // Imagen Docker mínima: `next build` deja en .next/standalone un server.js con solo los archivos
+  // que usa (ver Dockerfile). No cambia `next dev`.
+  output: "standalone",
   allowedDevOrigins: devOrigins,
   cacheComponents: true,
   partialPrefetching: true,

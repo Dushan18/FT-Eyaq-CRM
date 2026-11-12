@@ -17,13 +17,14 @@ import { latestRequestByCustomer, mergeMessages } from "./inbox-utils";
 
 const LIST_PREFIX = ["conversations", "list"] as const;
 
-export function useConversationList(filters: { channel?: ContactChannel; search?: string; limit: number }) {
+export function useConversationList(filters: { channel?: ContactChannel; search?: string; limit: number; enabled?: boolean }) {
   const query = { channel: filters.channel, search: filters.search || undefined, limit: filters.limit };
   return useQuery({
     queryKey: qk.conversations(query),
     queryFn: () => conversationsApi.list(query),
     placeholderData: keepPreviousData,
     refetchInterval: INBOX_POLL_MS,
+    enabled: filters.enabled ?? true,
   });
 }
 

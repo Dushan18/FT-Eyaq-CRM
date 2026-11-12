@@ -1,8 +1,28 @@
-
+# Nada de esto entra en la imagen: dependencias y builds locales, pruebas, reportes, documentación
+# y, sobre todo, secretos. La configuración llega por variables de entorno (Dokploy).
 node_modules
 .next
+out
+build
+coverage
+test-results
+playwright-report
+e2e
+docs
 .git
+.github
+.vscode
+.idea
+.claude
+*.log
+npm-debug.log*
+tsconfig.tsbuildinfo
+
+# Secretos: solo entra la plantilla sin valores.
 .env
 .env.*
 !.env.example
-npm-debug.log*
+*.pem
+*.key
+*.crt
+secrets

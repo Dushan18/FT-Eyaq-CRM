@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { conversationsApi, customersApi, requestsApi, reservationsApi } from "@/lib/api/endpoints";
-import type { Conversation, CustomerDetail, Message, Paginated } from "@/lib/api/types";
+import type { Conversation, CustomerDetail, Message, Paginated, ReservationRequestDetail } from "@/lib/api/types";
 import type { Action, RoleCode, ViewKey } from "@/lib/auth/permissions";
 import { renderWithQuery } from "@/test/render";
 import { BandejaView } from "./bandeja-view";
@@ -126,5 +126,64 @@ describe("Bandeja según el ancho de la pantalla", () => {
     expect(await screen.findByRole("complementary", { name: "Datos del cliente" })).toBeInTheDocument();
     await screen.findByRole("heading", { name: "Lucía Quispe" });
     expect(screen.queryByRole("button", { name: "Cliente" })).not.toBeInTheDocument();
+  });
+});
+
+describe("Bandeja › filtro Web: correos de la web en solo lectura", () => {
+  const WEB_REQUEST = "7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+  const webRequest: ReservationRequestDetail = {
+    id: WEB_REQUEST,
+    code: "RES-2026-000466",
+    externalReference: "SM-20261110-9E49B1",
+    customerId: CUSTOMER,
+    commercialItemId: null,
+    conversationId: null,
+    sourceChannel: "WEBSITE",
+    reservationAt: "2026-11-21T00:30:00.000Z",
+    numberOfPeople: 4,
+    quotedPrice: null,
+    currency: null,
+    comments: "Es el cumpleaños de mi mamá\nPaís: Perú\nCRM: correo del formulario: ana@example.com",
+    specialRequirements: "Terraza",
+    status: "WAITING_RESPONSE",
+    createdAt: "2026-11-10T14:00:00.000Z",
+    updatedAt: "2026-11-10T14:00:05.000Z",
+    customer: { id: CUSTOMER, firstName: "Lucía", lastName: "Quispe", phone: "+51987654321", email: null },
+    commercialItem: null,
+    statusHistory: [],
+    reservation: null,
+    ownerMessage: null,
+    customerNoticeMessage: null,
+    customerNoticeError: null,
+  };
+
+  it("lista las solicitudes WEBSITE (no conversaciones) y muestra el correo sin cuadro de respuesta", async () => {
+    window.innerWidth = 1440;
+    nav.search = `canal=web&correo=${WEB_REQUEST}`;
+    const list = vi.spyOn(requestsApi, "list").mockResolvedValue({ data: [webRequest], pagination: { page: 1, limit: 50, total: 1, totalPages: 1 } });
+    vi.spyOn(requestsApi, "get").mockResolvedValue(webRequest);
+    renderWithQuery(<BandejaView />);
+
+    expect(await screen.findByRole("heading", { name: "Nueva reserva SM-20261110-9E49B1" })).toBeInTheDocument();
+    expect(list).toHaveBeenCalledWith({ channel: "WEBSITE", limit: 50 });
+    expect(conversationsApi.list).not.toHaveBeenCalledWith(expect.objectContaining({ channel: "WEBSITE" }));
+    expect(screen.getByText("Es el cumpleaños de mi mamá")).toBeInTheDocument();
+    expect(screen.getByText("CRM: correo del formulario: ana@example.com")).toBeInTheDocument();
+    expect(screen.getByText(/no se responden desde el CRM/)).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Mensaje" })).not.toBeInTheDocument();
+    // Sin la columna del cliente: el correo no es una conversación.
+    expect(screen.queryByRole("complementary", { name: "Datos del cliente" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Ver solicitud RES-2026-000466" })).toHaveAttribute(
+      "href",
+      `/solicitudes?solicitud=${WEB_REQUEST}`,
+    );
+  });
+
+  it("con lista y correo a la vista abre el primer correo", async () => {
+    window.innerWidth = 1440;
+    nav.search = "canal=web";
+    vi.spyOn(requestsApi, "list").mockResolvedValue({ data: [webRequest], pagination: { page: 1, limit: 50, total: 1, totalPages: 1 } });
+    renderWithQuery(<BandejaView />);
+    await waitFor(() => expect(nav.replace).toHaveBeenCalledWith(`/bandeja?canal=web&correo=${WEB_REQUEST}`, { scroll: false }));
   });
 });
