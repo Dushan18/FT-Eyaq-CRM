@@ -207,13 +207,16 @@ function reviewTarget(ctx: Ctx, revision: number) {
   return { conv, draft };
 }
 
+/**
+ * Más recientes primero. Con el mismo createdAt (dos borradores en el mismo milisegundo) se desempata por
+ * orden de creación: el id es aleatorio y haría el orden no determinista.
+ */
 function conversationDrafts(store: MockStore, conversationId: string) {
   return store.drafts
-    .filter((d) => d.conversationId === conversationId)
-    .sort(
-      (a, b) =>
-        b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id),
-    );
+    .map((draft, index) => ({ draft, index }))
+    .filter(({ draft }) => draft.conversationId === conversationId)
+    .sort((a, b) => b.draft.createdAt.localeCompare(a.draft.createdAt) || b.index - a.index)
+    .map(({ draft }) => draft);
 }
 
 // ---------------------------------------------------------------------------- rutas
@@ -327,10 +330,21 @@ export const inboxRoutes: Route[] = [
       const paused = check.bool("paused", ctx.body.paused, { required: true });
       check.done();
       const conv = getConversation(ctx);
-      // Pausar deja STALE los borradores pendientes (se recalcula al leerlos).
-      if (conv.isAssistantPaused !== paused) {
-        conv.isAssistantPaused = paused!;
-        conv.updatedAt = iso(Date.now());
+      const now = iso(Date.now());
+      // Pausar deja STALE los borradores pendientes (se recalcula al leerlos). Pausar fija MANUAL y la hora
+      // aunque ya estuviera en pausa por otro motivo; reanudar deja los dos en null.
+      // La conversación del «Propietario» también se puede reanudar, como en bk-crm: el simulador la vuelve a
+      // pausar (MANUAL) con el siguiente mensaje del propietario, y Samanta nunca le responde.
+      if (paused) {
+        conv.isAssistantPaused = true;
+        conv.assistantPauseReason = "MANUAL";
+        conv.assistantPausedAt = now;
+        conv.updatedAt = now;
+      } else if (conv.isAssistantPaused) {
+        conv.isAssistantPaused = false;
+        conv.assistantPauseReason = null;
+        conv.assistantPausedAt = null;
+        conv.updatedAt = now;
       }
       return json(200, conversationOut(ctx.store, conv));
     },
@@ -525,6 +539,7 @@ export const inboxRoutes: Route[] = [
         reviewedById: null,
         editedById: null,
         status: "READY",
+        mode: "MANUAL",
         revision: 1,
         model: SAMANTA_MODEL,
         promptVersion: SAMANTA_PROMPT_VERSION,
@@ -537,10 +552,15 @@ export const inboxRoutes: Route[] = [
         inputTokens: reply.inputTokens,
         outputTokens: reply.outputTokens,
         errorCode: null,
+        availableAt: null,
+        generationStartedAt: iso(now),
         generationExpiresAt: iso(now + GENERATION_WINDOW_MS),
         expiresAt: iso(now + DRAFT_TTL_MS),
         reviewedAt: null,
         outboundMessageId: null,
+        reservationProposal: null,
+        reservationRequestId: null,
+        reservationOutcome: null,
         createdAt: iso(now),
         updatedAt: iso(now),
       };

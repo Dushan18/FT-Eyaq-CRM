@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
   if (!getServerEnv().simulatorEnabled) return disabled();
   const action = (await request.json().catch(() => null)) as SimulatorAction | null;
   if (!action || typeof action !== "object" || !("accion" in action)) {
-    return jsonError(400, 'Envía {"accion": "entrante" | "samanta" | "solicitud" | "dueno" | "reiniciar", ...}.');
+    return jsonError(400, 'Envía {"accion": "entrante" | "samanta" | "solicitud" | "enviar_dueno" | "fallo_dueno" | "dueno" | "dueno_propuesta" | "cliente_confirma" | "reiniciar", ...}.');
   }
   try {
     return NextResponse.json(runSimulator(action), { headers: { "cache-control": "no-store" } });

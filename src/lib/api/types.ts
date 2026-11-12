@@ -198,6 +198,11 @@ export interface RestaurantConfig {
   longitude: number | null;
   /** E.164: "+51987654321" */
   whatsappNumber: string;
+  /**
+   * WhatsApp personal del propietario (E.164, distinto de whatsappNumber), adonde el backend envía las
+   * solicitudes de Samanta y de la web para que las apruebe (M9.1). null si no está configurado.
+   */
+  ownerWhatsappNumber: string | null;
   email: string;
   website: string | null;
   currency: CurrencyCode;
@@ -229,6 +234,11 @@ export interface PutRestaurantConfigRequest {
   latitude: number | null;
   longitude: number | null;
   whatsappNumber: string;
+  /**
+   * E.164 y distinto de whatsappNumber. A diferencia de los demás opcionales, **omitirlo conserva el valor
+   * guardado**; null lo borra y deja de enviar solicitudes al propietario.
+   */
+  ownerWhatsappNumber?: string | null;
   email: string;
   website: string | null;
   currency: CurrencyCode;
@@ -236,6 +246,7 @@ export interface PutRestaurantConfigRequest {
   reservationPolicy: string;
   cancellationPolicy: string;
   responseTimeoutMinutes: number;
+  /** Usuario activo con rol OWNER. **Omitirlo lo borra** (igual que null): envíalo siempre con el valor actual. */
   approvalResponsibleId: Uuid | null;
   languages: LanguageCode[];
   schedules: RestaurantScheduleInput[];
@@ -433,8 +444,12 @@ export interface ReservationRequest {
   id: Uuid;
   /** "RES-2026-000042" */
   code: string;
+  /** Código de origen, p. ej. el de la web ("SM-20261029-B65A25"); null si se creó en el CRM. */
+  externalReference: string | null;
   customerId: Uuid;
   commercialItemId: Uuid | null;
+  /** Conversación vinculada, siempre del mismo cliente; null si no hay. Desde el 10/11. */
+  conversationId: Uuid | null;
   sourceChannel: ContactChannel;
   /** null mientras faltan datos. */
   reservationAt: IsoDateTime | null;
@@ -462,11 +477,104 @@ export interface ReservationRequestListQuery {
   status?: ReservationRequestStatus;
   channel?: ContactChannel;
   commercialItemId?: Uuid;
+  /** Solicitudes vinculadas a esa conversación (10/11). */
+  conversationId?: Uuid;
   search?: string;
 }
 
+/** Body de PATCH /reservation-requests/:id/status (solo permite cancelar). */
 export interface CancelReservationRequestBody {
   status: "CANCELLED";
+  /** Motivo (1–1000, con trim); se guarda en statusHistory. */
+  reason?: string | null;
+}
+
+/** Body de POST /reservation-requests/:id/reject (10/11). */
+export interface RejectReservationRequestBody {
+  /** Motivo (1–1000, con trim); se guarda en statusHistory. */
+  reason?: string | null;
+}
+
+/** Largo máximo del motivo de un rechazo o una cancelación. */
+export const REQUEST_REASON_MAX_LENGTH = 1000;
+
+/** Respuesta de POST /reservation-requests/:id/approve (10/11): la solicitud ACCEPTED y su reserva CONFIRMED. */
+export interface ReservationRequestApproval {
+  request: ReservationRequest;
+  reservation: Reservation;
+}
+
+export const RESERVATION_REQUEST_ACTOR_TYPES = ["USER", "SAMANTA", "OWNER", "SYSTEM"] as const;
+/** Hoy se generan USER, SYSTEM (envío al propietario) y OWNER (sus respuestas); SAMANTA todavía no. */
+export type ReservationRequestActorType = (typeof RESERVATION_REQUEST_ACTOR_TYPES)[number];
+
+/** Un cambio de estado de la solicitud (previousStatus !== newStatus). */
+export interface ReservationRequestStatusEntry {
+  id: Uuid;
+  previousStatus: ReservationRequestStatus;
+  newStatus: ReservationRequestStatus;
+  actorType: ReservationRequestActorType;
+  /** null solo con actorType SYSTEM. */
+  actorId: Uuid | null;
+  /** reason de una cancelación o un rechazo, o el texto del backend en los cambios SYSTEM y OWNER. */
+  reason: string | null;
+  createdAt: IsoDateTime;
+  actor: PublicUser | null;
+}
+
+/** Estado de un mensaje saliente tal como lo resume el detalle de la solicitud. */
+export type RequestMessageStatus = "QUEUED" | "SENDING" | "SENT" | "DELIVERED" | "READ" | "UNKNOWN" | "FAILED";
+
+/** Mensaje de WhatsApp que pidió la aprobación al propietario (M9.1). */
+export interface RequestOwnerMessage {
+  id: Uuid;
+  status: RequestMessageStatus;
+  errorCode: string | null;
+  createdAt: IsoDateTime;
+  sentAt: IsoDateTime | null;
+  deliveredAt: IsoDateTime | null;
+  providerReadAt: IsoDateTime | null;
+}
+
+/** M9.3: aviso al cliente de la decisión del propietario. */
+export interface CustomerNoticeMessage {
+  id: Uuid;
+  conversationId: Uuid;
+  channel: "WHATSAPP" | "FACEBOOK" | "INSTAGRAM";
+  /** No nulo si se envió como plantilla (ventana de 24 h cerrada). */
+  templateName: string | null;
+  status: RequestMessageStatus;
+  errorCode: string | null;
+  createdAt: IsoDateTime;
+  sentAt: IsoDateTime | null;
+  deliveredAt: IsoDateTime | null;
+  providerReadAt: IsoDateTime | null;
+}
+
+export const CUSTOMER_NOTICE_ERRORS = [
+  "NO_CONSENT",
+  "PERSON_ATTENDING",
+  "WINDOW_CLOSED",
+  "TEMPLATES_OFF",
+  "INCOMPLETE_FOR_TEMPLATE",
+  "CHANNEL_DISABLED",
+  "NO_RECIPIENT",
+  "OWNER_NUMBER",
+] as const;
+/** M9.3: por qué no se pudo avisar al cliente de la decisión del propietario. */
+export type CustomerNoticeError = (typeof CUSTOMER_NOTICE_ERRORS)[number];
+
+/** Respuesta de GET /reservation-requests/:id. statusHistory: createdAt ascendente, sin paginar. */
+export interface ReservationRequestDetail extends ReservationRequest {
+  statusHistory: ReservationRequestStatusEntry[];
+  /** Reserva creada al aprobar (10/11), con su estado actual; null si no se aprobó. */
+  reservation: { id: Uuid; code: string; status: ReservationStatus; reservationAt: IsoDateTime } | null;
+  /** Mensaje de WhatsApp que pidió la aprobación al propietario (10/11); null si no se envió. */
+  ownerMessage: RequestOwnerMessage | null;
+  /** M9.3: aviso al cliente de la decisión del propietario; null si no hubo. */
+  customerNoticeMessage: CustomerNoticeMessage | null;
+  /** M9.3: por qué no se avisó al cliente; null si se avisó o no correspondía. Nunca junto con customerNoticeMessage. */
+  customerNoticeError: CustomerNoticeError | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -598,11 +706,27 @@ export interface ConversationAssignedUser {
 }
 
 /** Misma forma en listado, detalle y respuestas de PATCH. No incluye el último mensaje. */
+/**
+ * Por qué Samanta está en pausa: MANUAL (PATCH /assistant), OPERATOR_REPLIED (un operador
+ * escribió con el modo automático activo) o SAMANTA_HANDOFF (Samanta pasó la conversación a una persona).
+ */
+export type AssistantPauseReason = "MANUAL" | "OPERATOR_REPLIED" | "SAMANTA_HANDOFF";
+
+/**
+ * Usuario de sistema que firma las respuestas automáticas de Samanta y las del backend al propietario
+ * (inactivo; no aparece en GET /users).
+ */
+export const SAMANTA_USER_ID: Uuid = "00000000-0000-4000-8000-00000000a0a1";
+
 export interface Conversation {
   id: Uuid;
   customerId: Uuid;
   channel: ContactChannel;
   isAssistantPaused: boolean;
+  /** null si no está en pausa. */
+  assistantPauseReason: AssistantPauseReason | null;
+  /** Desde cuándo está en pausa; null si no lo está. */
+  assistantPausedAt: IsoDateTime | null;
   assignedUserId: Uuid | null;
   lastMessageAt: IsoDateTime | null;
   createdAt: IsoDateTime;
@@ -1237,9 +1361,12 @@ export type OutboundMessageErrorCode =
 export type MessageErrorCode =
   InboundMessageErrorCode | OutboundMessageErrorCode;
 
-/** APPROVED, REJECTED, STALE y FAILED son finales. */
+/** APPROVED, REJECTED, STALE y FAILED son finales. SCHEDULED solo existe en los automáticos. */
 export type SamantaDraftStatus =
-  "GENERATING" | "READY" | "APPROVED" | "REJECTED" | "STALE" | "FAILED";
+  "SCHEDULED" | "GENERATING" | "READY" | "APPROVED" | "REJECTED" | "STALE" | "FAILED";
+
+/** MANUAL: lo pidió una persona. AUTO: lo creó Samanta al llegar un mensaje del cliente. */
+export type SamantaDraftMode = "MANUAL" | "AUTO";
 
 export const SAMANTA_DRAFT_FINAL_STATUSES: readonly SamantaDraftStatus[] = [
   "APPROVED",
@@ -1252,6 +1379,7 @@ export const SAMANTA_DRAFT_FINAL_STATUSES: readonly SamantaDraftStatus[] = [
 export const SAMANTA_DRAFT_ACTIONS: Readonly<
   Record<SamantaDraftStatus, readonly ("edit" | "approve" | "reject")[]>
 > = {
+  SCHEDULED: [],
   GENERATING: [],
   READY: ["edit", "approve", "reject"],
   APPROVED: [],
@@ -1264,17 +1392,27 @@ export const SAMANTA_DRAFT_ACTIONS: Readonly<
 export type SamantaIntent =
   "GENERAL" | "RESERVATION" | "CANCELLATION" | "HUMAN" | "OTHER";
 
-/** Códigos de error de un borrador FAILED. */
+/** Códigos de error de un borrador FAILED. Los AUTO_* y AI_CONTEXT_UNAVAILABLE solo aparecen en los automáticos. */
 export type SamantaErrorCode =
   | "AI_TIMEOUT"
   | "AI_RATE_LIMITED"
+  | "AI_QUOTA_EXCEEDED"
+  | "AI_AUTH_FAILED"
+  | "AI_MODEL_NOT_FOUND"
   | "AI_REQUEST_REJECTED"
   | "AI_INVALID_RESPONSE"
   | "AI_INCOMPLETE_RESPONSE"
   | "AI_REFUSED_RESPONSE"
   | "AI_RESPONSE_TOO_LARGE"
   | "AI_UNAVAILABLE"
-  | "AI_GENERATION_EXPIRED";
+  | "AI_GENERATION_EXPIRED"
+  | "AI_CONTEXT_UNAVAILABLE"
+  | "AUTO_DAILY_LIMIT"
+  | "AUTO_CONVERSATION_LIMIT"
+  | "AUTO_CANNOT_REPLY"
+  | "AUTO_SEND_REJECTED"
+  | "AUTO_EXPIRED"
+  | "AUTO_INTERNAL_ERROR";
 
 /** Máximo de content.length de un borrador (texto de la IA y texto editado). */
 export const SAMANTA_DRAFT_MAX_LENGTH = 4096;
@@ -1297,6 +1435,34 @@ export interface EditSamantaDraftRequest extends ReviewSamantaDraftRequest {
   content: string;
 }
 
+export const SAMANTA_RESERVATION_OUTCOMES = [
+  "PROPOSED",
+  "CREATED",
+  "ALREADY_REGISTERED",
+  "ALREADY_DECIDED",
+  "MISSING_DATA",
+  "INVALID_DATE",
+  "PAST_DATE",
+  "INVALID_PEOPLE",
+  "UNKNOWN_SERVICE",
+  "NO_PROPOSAL",
+] as const;
+/** Qué hizo la acción de reserva de una respuesta automática (10/11). */
+export type SamantaReservationOutcome = (typeof SAMANTA_RESERVATION_OUTCOMES)[number];
+
+/** Datos validados del resumen que Samanta envió para que el cliente confirme (10/11). */
+export interface SamantaReservationProposal {
+  /** Fecha local del restaurante, AAAA-MM-DD. */
+  date: string;
+  /** Hora local, HH:MM (24 h). */
+  time: string;
+  people: number;
+  commercialItemId: Uuid | null;
+  service: string | null;
+  specialRequirements: string | null;
+  language: "es" | "en";
+}
+
 /** Borrador de Samanta: fila completa que devuelven todas sus rutas. */
 export interface SamantaDraft {
   id: Uuid;
@@ -1305,14 +1471,16 @@ export interface SamantaDraft {
   sourceMessageId: Uuid;
   /** `sequence` del último mensaje al generar. Si llega otro mensaje, el borrador queda STALE. */
   baselineSequence: number;
-  /** Clave Idempotency-Key usada al generar. */
+  /** Clave Idempotency-Key usada al generar; "auto-<sourceMessageId>" en los automáticos. */
   idempotencyKey: string;
+  /** Quien pidió la generación; SAMANTA_USER_ID en los automáticos. */
   createdById: Uuid;
-  /** Quien aprobó o rechazó. */
+  /** Quien aprobó o rechazó; SAMANTA_USER_ID si Samanta lo envió sola. */
   reviewedById: Uuid | null;
   /** Último usuario que editó el texto. */
   editedById: Uuid | null;
   status: SamantaDraftStatus;
+  mode: SamantaDraftMode;
   /** Empieza en 1 y suma 1 con cada edición. Se envía en editar, aprobar y rechazar. */
   revision: number;
   /** Modelo de IA (SAMANTA_MODEL). */
@@ -1335,13 +1503,23 @@ export interface SamantaDraft {
   inputTokens: number | null;
   outputTokens: number | null;
   errorCode: SamantaErrorCode | null;
-  /** Límite de la generación (inicio + SAMANTA_TIMEOUT_MS + 10 s). Después pasa a FAILED. */
-  generationExpiresAt: IsoDateTime;
+  /** Automáticos: cuándo se responde (llegada + SAMANTA_AUTO_DELAY_MS). null en los manuales. */
+  availableAt: IsoDateTime | null;
+  /** Cuándo se llamó a la IA (cuenta para el límite diario). null si nunca se generó. */
+  generationStartedAt: IsoDateTime | null;
+  /** Límite de la generación (inicio + SAMANTA_TIMEOUT_MS + 10 s). Después pasa a FAILED. null en SCHEDULED. */
+  generationExpiresAt: IsoDateTime | null;
   /** Inicio + 15 min. Después pasa a STALE. */
   expiresAt: IsoDateTime;
   reviewedAt: IsoDateTime | null;
   /** Mensaje OUTBOUND creado al aprobar. */
   outboundMessageId: Uuid | null;
+  /** Solo en automáticos con reservationOutcome PROPOSED: el resumen enviado (10/11). */
+  reservationProposal: SamantaReservationProposal | null;
+  /** En el borrador del resumen: la solicitud creada al confirmarlo (como mucho una). */
+  reservationRequestId: Uuid | null;
+  /** Solo en automáticos con acción de reserva; entonces content es el texto fijo del backend. */
+  reservationOutcome: SamantaReservationOutcome | null;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
 }

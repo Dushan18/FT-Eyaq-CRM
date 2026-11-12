@@ -11,7 +11,8 @@ import { useNow } from "@/lib/hooks/use-now";
 import { useRestaurant } from "@/lib/restaurant";
 import { Avatar, FilterChip, Tag } from "@/components/ui/primitives";
 import { EmptyState, ErrorState, InlineNotice, LoadingState } from "@/components/ui/state";
-import { conversationTag } from "./inbox-utils";
+import { TONES } from "@/lib/domain/tones";
+import { conversationTag, isOwnerConversation } from "./inbox-utils";
 import { useConversationList, useCustomerLatestRequest, useLastMessage, useLatestRequests, useUnreadSummary } from "./use-inbox";
 
 export const LIST_PAGE = 50;
@@ -196,6 +197,8 @@ function ConversationRow({
 }) {
   const ch = channelMeta(c.channel);
   const name = customerName(c.customer, c.channel);
+  const { config } = useRestaurant();
+  const owner = isOwnerConversation(c, config?.ownerWhatsappNumber);
   const unread = c.unreadCount > 0;
 
   const last = useLastMessage(c);
@@ -228,7 +231,10 @@ function ConversationRow({
     >
       <Avatar text={customerInitials(c.customer)} size={40} badge={c.channel} />
       <div className="flex min-w-0 flex-col gap-0.75">
-        <div className={cn("truncate text-sm", unread ? "font-bold" : "font-semibold")}>{name}</div>
+        <div className={cn("flex min-w-0 items-center gap-1.5 text-sm", unread ? "font-bold" : "font-semibold")}>
+          <span className="truncate">{name}</span>
+          {owner ? <Tag tone={TONES.orange}>Propietario</Tag> : null}
+        </div>
         <div className="truncate text-[12.5px] text-muted">{preview}</div>
         {tag ? (
           <div className="mt-0.5 flex gap-1.25">

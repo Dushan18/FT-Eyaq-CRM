@@ -47,3 +47,15 @@ describe("permisos por rol (réplica de la matriz de bk-crm)", () => {
     expect(viewFromPath("/no-existe")).toBeNull();
   });
 });
+
+describe("aprobar y rechazar solicitudes (POST /reservation-requests/:id/approve|reject)", () => {
+  it("solo ADMIN y OWNER; OPERATOR y SUPPORT no", () => {
+    expect(can(["ADMIN"], "request.approve")).toBe(true);
+    expect(can(["OWNER"], "request.approve")).toBe(true);
+    expect(can(["OPERATOR"], "request.approve")).toBe(false);
+    expect(can(["SUPPORT"], "request.approve")).toBe(false);
+    // OWNER decide, pero sigue sin editar ni cancelar (PATCH es de ADMIN y OPERATOR).
+    expect(can(["OWNER"], "request.edit")).toBe(false);
+    expect(can(["OWNER"], "request.cancel")).toBe(false);
+  });
+});

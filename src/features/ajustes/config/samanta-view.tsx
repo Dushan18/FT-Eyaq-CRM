@@ -1,18 +1,15 @@
 "use client";
 
-import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import Link from "next/link";
 import { useMemo, useRef, useState, type FormEvent } from "react";
-import { usersApi } from "@/lib/api/endpoints";
-import { qk } from "@/lib/api/query-keys";
-import type { ContactChannel, RestaurantConfig, User } from "@/lib/api/types";
+import type { ContactChannel, RestaurantConfig } from "@/lib/api/types";
 import { useSession } from "@/lib/auth/session";
 import { channelMeta } from "@/lib/domain/channels";
 import { personName } from "@/lib/format/text";
 import { ChannelDot, Toggle } from "@/components/ui/primitives";
-import { SelectField, TextField } from "@/components/ui/fields";
-import { InlineNotice } from "@/components/ui/state";
+import { TextField } from "@/components/ui/fields";
 import { TimeoutField } from "./config-fields";
-import { NO_RESPONSIBLE_LABEL, pickValues, responsibleOptions, samantaValues, type SamantaValues } from "./config-form";
+import { NO_RESPONSIBLE_LABEL, pickValues, samantaValues, type SamantaValues } from "./config-form";
 import { validateFields, withoutErrors, type FieldErrors } from "./config-schema";
 import {
   ConfigGate,
@@ -92,14 +89,15 @@ function SamantaContent({ config, save }: { config: RestaurantConfig; save: Conf
   );
 }
 
-/** Responsable de aprobación y tiempo máximo de respuesta (lo único de Samanta que guarda el backend). */
+/**
+ * Tiempo máximo de respuesta. El WhatsApp del propietario y el responsable de aprobaciones se editan en
+ * Empresa (Aprobación del propietario); aquí solo se muestran.
+ */
 function OwnerValidationCard({ config, save, canEdit }: { config: RestaurantConfig; save: ConfigSave; canEdit: boolean }) {
   const base = useMemo(() => samantaValues(config), [config]);
   const { values, changed, dirty, update, reset, commit } = useDraft(base);
   const [errors, setErrors] = useState<FieldErrors>({});
   const formRef = useRef<HTMLFormElement>(null);
-  // Candidatos: usuarios activos con rol OWNER. Solo ADMIN puede listar usuarios (GET /users).
-  const users = useQuery({ queryKey: qk.users, queryFn: usersApi.list, enabled: canEdit });
 
   function change(patch: Partial<SamantaValues>) {
     update(patch);
@@ -127,45 +125,22 @@ function OwnerValidationCard({ config, save, canEdit }: { config: RestaurantConf
     save.reset();
   }
 
-  const { options, currentInvalid } = responsibleOptions(users.data, config.approvalResponsible);
-  // El responsable guardado ya no es válido: el backend rechazaría cualquier guardado de Ajustes.
-  const staleSelected = canEdit && currentInvalid && values.approvalResponsibleId === config.approvalResponsibleId;
   const responsibleName = config.approvalResponsible
     ? personName(config.approvalResponsible.firstName, config.approvalResponsible.lastName)
     : NO_RESPONSIBLE_LABEL;
+  const editLink = <Link href="/ajustes/empresa" className="font-semibold text-brand hover:underline">Empresa</Link>;
 
   return (
-    <SettingsCard title="Validación del dueño">
+    <SettingsCard title="Validación del propietario">
       <form ref={formRef} onSubmit={submit} noValidate className="flex flex-col gap-3.5">
-        {staleSelected ? (
-          <InlineNotice tone="warning">
-            {responsibleName} ya no está activo o perdió el rol Propietario: el backend rechazará los cambios de Ajustes hasta
-            que elijas otro responsable o lo dejes sin responsable.
-          </InlineNotice>
-        ) : null}
-        <div className="grid grid-cols-2 gap-3.5">
-          {canEdit ? (
-            <SelectField
-              label="Responsable de aprobación"
-              value={values.approvalResponsibleId}
-              error={errors.approvalResponsibleId}
-              hint={<OwnersHint users={users} />}
-              onChange={(e) => change({ approvalResponsibleId: e.target.value })}
-            >
-              {options.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </SelectField>
-          ) : (
-            <TextField label="Responsable de aprobación" value={responsibleName} readOnly disabled />
-          )}
+        <div className="grid gap-3.5 sm:grid-cols-2">
+          <TextField label="Responsable de aprobaciones" value={responsibleName} readOnly disabled hint={<>Se edita en {editLink}.</>} />
           <TextField
-            label="WhatsApp personal"
-            placeholder="—"
+            label="WhatsApp personal del propietario"
+            value={config.ownerWhatsappNumber ?? "Sin número"}
+            readOnly
             disabled
-            hint="Pendiente en el backend: el usuario aún no tiene teléfono personal"
+            hint={<>Se edita en {editLink}.</>}
           />
           <TimeoutField
             value={values.responseTimeoutMinutes}
@@ -183,17 +158,3 @@ function OwnerValidationCard({ config, save, canEdit }: { config: RestaurantConf
   );
 }
 
-/** Estado de la lista de propietarios bajo el selector: cargando, error con Reintentar o la regla. */
-function OwnersHint({ users }: { users: UseQueryResult<User[]> }) {
-  if (users.isError) {
-    return (
-      <>
-        No se pudo cargar la lista de propietarios.{" "}
-        <button type="button" onClick={() => void users.refetch()} className="cursor-pointer font-semibold text-brand hover:underline">
-          Reintentar
-        </button>
-      </>
-    );
-  }
-  return users.isPending ? "Cargando propietarios…" : "Usuarios activos con rol Propietario.";
-}

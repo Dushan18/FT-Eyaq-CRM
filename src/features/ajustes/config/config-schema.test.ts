@@ -5,6 +5,7 @@ import { toPutRequest } from "./config-request";
 import {
   SCHEDULE_MESSAGES,
   backendMessageTabs,
+  ownerNumberError,
   compactPhone,
   isValidTimeZone,
   issuesToErrors,
@@ -195,7 +196,8 @@ describe("helpers de errores", () => {
   });
 
   it("backendMessageTabs señala la pestaña de cada propiedad que rechazó el backend", () => {
-    expect(backendMessageTabs(["El responsable de aprobación debe estar activo"])).toEqual(["samanta"]);
+    expect(backendMessageTabs(["El responsable de aprobación debe estar activo"])).toEqual(["empresa"]);
+    expect(backendMessageTabs(["ownerWhatsappNumber debe ser distinto de whatsappNumber"])).toEqual(["empresa"]);
     expect(backendMessageTabs(["schedules.4.openTime debe tener el formato HH:mm", "logoUrl must be a URL address"])).toEqual([
       "empresa",
       "horarios",
@@ -228,5 +230,23 @@ describe("reglas sueltas", () => {
     expect(urlProblem("https://sabor magico.pe")).toBe("La URL no puede tener espacios.");
     expect(urlProblem("https://intranet")).toMatch(/dominio público/);
     expect(urlProblem("data:image/png;base64,AAAA")).toMatch(/https:\/\//);
+  });
+});
+
+describe("WhatsApp del propietario", () => {
+  it("vacío es null; con espacios se compacta; sin + o corto no es E.164", () => {
+    expect(validateFields({ ownerWhatsappNumber: "" })).toEqual({ success: true, data: { ownerWhatsappNumber: null } });
+    expect(validateFields({ ownerWhatsappNumber: null })).toEqual({ success: true, data: { ownerWhatsappNumber: null } });
+    expect(validateFields({ ownerWhatsappNumber: "+51 912 345 678" })).toEqual({ success: true, data: { ownerWhatsappNumber: "+51912345678" } });
+    for (const bad of ["912345678", "+51 12"]) {
+      const result = validateFields({ ownerWhatsappNumber: bad });
+      expect(result.success ? null : result.errors.ownerWhatsappNumber).toMatch(/formato internacional/);
+    }
+  });
+
+  it("no puede ser el WhatsApp del negocio", () => {
+    expect(ownerNumberError("+51987000192", "+51 987 000 192")).toMatch(/distinto del WhatsApp del negocio/);
+    expect(ownerNumberError("+51912345678", "+51987000192")).toBeUndefined();
+    expect(ownerNumberError(null, "+51987000192")).toBeUndefined();
   });
 });

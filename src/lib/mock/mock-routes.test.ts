@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type {
   CommercialCategory,
   CommercialItem,
+  Conversation,
   Customer,
   CustomerDetail,
   CustomerInterest,
@@ -18,10 +19,14 @@ import type {
   ReservationDetail,
   ReservationNote,
   ReservationRequest,
+  ReservationRequestApproval,
+  ReservationRequestDetail,
+  RestaurantConfig,
   SamantaDraft,
   SamantaDraftListResponse,
   User,
 } from "@/lib/api/types";
+import { SAMANTA_USER_ID } from "@/lib/api/types";
 import { buildSeed } from "./seed";
 import { handleMockRequest, mockStore } from "./server";
 import { runSimulator } from "./simulator";
@@ -41,6 +46,9 @@ interface ErrorBody {
   message: string | string[];
   error?: string;
 }
+
+/** Respuesta de una ruta que puede devolver el recurso o un error. */
+type OrError<T> = T & Partial<ErrorBody>;
 
 async function api<T = ErrorBody>(
   method: string,
@@ -803,6 +811,310 @@ describe("solicitudes de reserva", () => {
       },
     });
   });
+
+  it("historial: solo cambios reales de estado; cancelar con motivo es idempotente y el detalle trae su forma completa", async () => {
+    const customerId = mockStore().customers[0]!.id;
+    const created = await api<ReservationRequest>("POST", "/reservation-requests", {
+      token: operator.token,
+      body: { customerId, sourceChannel: "PHONE", reservationAt: futureAt(4, 13) },
+    });
+    expect(created.body).toMatchObject({ status: "INCOMPLETE_DATA", externalReference: null, conversationId: null });
+    expect(created.body).not.toHaveProperty("statusHistory");
+    const id = created.body.id;
+    // INCOMPLETE_DATA → READY_TO_SEND deja una entrada USER; una edición sin cambio de estado, ninguna.
+    await api("PATCH", `/reservation-requests/${id}`, { token: operator.token, body: { numberOfPeople: 2 } });
+    await api("PATCH", `/reservation-requests/${id}`, { token: operator.token, body: { comments: "Ventana" } });
+
+    const cancel = (body: Record<string, unknown>) =>
+      api<OrError<ReservationRequest>>("PATCH", `/reservation-requests/${id}/status`, { token: operator.token, body });
+    expect((await cancel({ status: "CANCELLED", reason: "   " })).body.message).toEqual(["reason should not be empty"]);
+    expect((await cancel({ status: "CANCELLED", reason: "x".repeat(1001) })).body.message).toEqual([
+      "reason must be shorter than or equal to 1000 characters",
+    ]);
+    expect((await cancel({ status: "CANCELLED", foo: 1 })).body.message).toEqual(["property foo should not exist"]);
+    const cancelled = await cancel({ status: "CANCELLED", reason: "  El cliente reservó por teléfono  " });
+    expect(cancelled.status).toBe(200);
+    expect(cancelled.body.status).toBe("CANCELLED");
+    expect(cancelled.body).not.toHaveProperty("statusHistory");
+    const again = await cancel({ status: "CANCELLED", reason: "Otro motivo" });
+    expect(again).toMatchObject({ status: 200, body: { status: "CANCELLED", updatedAt: cancelled.body.updatedAt } });
+
+    const detail = await api<ReservationRequestDetail>("GET", `/reservation-requests/${id}`, { token: admin.token });
+    expect(Object.keys(detail.body).sort()).toEqual(
+      [
+        ...Object.keys(created.body),
+        "statusHistory",
+        "reservation",
+        "ownerMessage",
+        "customerNoticeMessage",
+        "customerNoticeError",
+      ].sort(),
+    );
+    expect(detail.body).toMatchObject({ reservation: null, ownerMessage: null, customerNoticeMessage: null, customerNoticeError: null });
+    expect(detail.body.statusHistory).toHaveLength(2);
+    expect(detail.body.statusHistory[0]).toMatchObject({
+      previousStatus: "INCOMPLETE_DATA",
+      newStatus: "READY_TO_SEND",
+      actorType: "USER",
+      actorId: operator.id,
+      reason: null,
+      actor: { id: operator.id, firstName: "Camila", lastName: "Torres" },
+    });
+    expect(Object.keys(detail.body.statusHistory[0]!).sort()).toEqual(
+      ["id", "previousStatus", "newStatus", "actorType", "actorId", "reason", "createdAt", "actor"].sort(),
+    );
+    expect(Object.keys(detail.body.statusHistory[0]!.actor!).sort()).toEqual(["firstName", "id", "lastName"]);
+    expect(detail.body.statusHistory[1]).toMatchObject({
+      previousStatus: "READY_TO_SEND",
+      newStatus: "CANCELLED",
+      actorType: "USER",
+      reason: "El cliente reservó por teléfono",
+    });
+  });
+
+  it("aprobar: ADMIN u OWNER; crea una reserva CONFIRMED, es idempotente y responde los 409 en orden", async () => {
+    const owner = await login("ricardo@sabormagico.pe");
+    const customerId = mockStore().customers[0]!.id;
+    const item = bookableItem();
+    const create = async (body: Record<string, unknown> = {}) =>
+      (
+        await api<ReservationRequest>("POST", "/reservation-requests", {
+          token: operator.token,
+          body: {
+            customerId,
+            sourceChannel: "PHONE",
+            commercialItemId: item.id,
+            reservationAt: futureAt(5, 20),
+            numberOfPeople: 4,
+            specialRequirements: "Silla para bebé",
+            ...body,
+          },
+        })
+      ).body.id;
+    const approve = (id: string, token = owner.token) =>
+      api<OrError<ReservationRequestApproval>>("POST", `/reservation-requests/${id}/approve`, { token });
+
+    const id = await create();
+    expect((await approve(id, operator.token)).body).toMatchObject({ statusCode: 403, message: "No tienes permisos para realizar esta acción" });
+    const before = mockStore().reservations.length;
+    const ok = await approve(id);
+    expect(ok.status).toBe(200);
+    expect(ok.body.request).toMatchObject({ id, status: "ACCEPTED" });
+    expect(ok.body.request).not.toHaveProperty("statusHistory");
+    expect(ok.body.reservation).toMatchObject({
+      reservationRequestId: id,
+      customerId,
+      commercialItemId: item.id,
+      numberOfPeople: 4,
+      status: "CONFIRMED",
+      notes: "Silla para bebé",
+      assignedUserId: null,
+      assignedUser: null,
+    });
+    expect(ok.body.reservation.code).toMatch(/^R-\d{4}-\d{6}$/);
+    // Idempotente: la misma reserva, sin escribir nada.
+    const again = await approve(id, admin.token);
+    expect(again.status).toBe(200);
+    expect(again.body.reservation.id).toBe(ok.body.reservation.id);
+    expect(again.body.request.updatedAt).toBe(ok.body.request.updatedAt);
+    expect(mockStore().reservations.length).toBe(before + 1);
+    // En el CRM no hay aviso automático al cliente.
+    const detail = await api<ReservationRequestDetail>("GET", `/reservation-requests/${id}`, { token: admin.token });
+    expect(detail.body).toMatchObject({
+      reservation: { id: ok.body.reservation.id, code: ok.body.reservation.code, status: "CONFIRMED" },
+      customerNoticeMessage: null,
+      customerNoticeError: null,
+    });
+    expect(detail.body.statusHistory.at(-1)).toMatchObject({ previousStatus: "READY_TO_SEND", newStatus: "ACCEPTED", actorType: "USER", actorId: owner.id });
+    // Una aprobada no se rechaza ni se cancela.
+    expect((await api("POST", `/reservation-requests/${id}/reject`, { token: owner.token, body: {} })).body).toMatchObject({
+      statusCode: 409,
+      message: "La solicitud ya fue aprobada: cancela su reserva desde el calendario",
+    });
+    expect((await api("PATCH", `/reservation-requests/${id}/status`, { token: operator.token, body: { status: "CANCELLED" } })).status).toBe(409);
+
+    // 409 por estado.
+    const incomplete = await create({ numberOfPeople: null });
+    expect((await approve(incomplete)).body).toMatchObject({
+      statusCode: 409,
+      message: "Completa la fecha y el número de personas antes de aprobar la solicitud",
+    });
+    const cancelled = await create();
+    await api("PATCH", `/reservation-requests/${cancelled}/status`, { token: operator.token, body: { status: "CANCELLED" } });
+    expect((await approve(cancelled)).body.message).toBe("La solicitud no se puede aprobar en su estado actual");
+    const rejected = await create();
+    await api("POST", `/reservation-requests/${rejected}/reject`, { token: owner.token, body: {} });
+    expect((await approve(rejected)).body.message).toBe("La solicitud no se puede aprobar en su estado actual");
+    // Fecha pasada (antes que el elemento): 409.
+    const past = await create();
+    const pastRow = mockStore().requests.find((r) => r.id === past)!;
+    pastRow.reservationAt = pastAt();
+    item.isActive = false;
+    expect((await approve(past)).body).toMatchObject({ statusCode: 409, message: "La fecha de la solicitud ya pasó: edítala antes de aprobarla" });
+    // Elemento que dejó de estar activo: 400.
+    pastRow.reservationAt = futureAt(6, 20);
+    expect((await approve(past)).body).toMatchObject({ statusCode: 400, message: "El elemento comercial debe estar activo y aprobado" });
+    item.isActive = true;
+    // Sin configuración: 409.
+    mockStore().config = null;
+    expect((await approve(past)).body).toMatchObject({ statusCode: 409, message: "Configura el restaurante antes de crear solicitudes o reservas" });
+    expect((await approve("8d2f4b6a-0c1e-4a3b-9d5f-7e9a1b3c5d7f")).body).toMatchObject({ statusCode: 404, message: "Solicitud de reserva no encontrada" });
+  });
+
+  it("aprobar y rechazar: aceptan SENT_TO_OWNER y WAITING_RESPONSE; MODIFICATION_REQUESTED responde 409", async () => {
+    const owner = await login("ricardo@sabormagico.pe");
+    const byStatus = (status: string) => mockStore().requests.find((r) => r.status === status)!;
+    const sent = byStatus("SENT_TO_OWNER");
+    const approved = await api<ReservationRequestApproval>("POST", `/reservation-requests/${sent.id}/approve`, { token: admin.token });
+    expect(approved.body.request.status).toBe("ACCEPTED");
+    const waiting = byStatus("WAITING_RESPONSE");
+    const rejected = await api<ReservationRequest>("POST", `/reservation-requests/${waiting.id}/reject`, {
+      token: owner.token,
+      body: { reason: "No hay mesas libres ese día" },
+    });
+    expect(rejected.body.status).toBe("REJECTED");
+    const modification = byStatus("MODIFICATION_REQUESTED");
+    expect((await api("POST", `/reservation-requests/${modification.id}/approve`, { token: owner.token })).body.message).toBe(
+      "La solicitud no se puede aprobar en su estado actual",
+    );
+    expect((await api("POST", `/reservation-requests/${modification.id}/reject`, { token: owner.token, body: {} })).body.message).toBe(
+      "La solicitud no se puede rechazar en su estado actual",
+    );
+    expect((await api("PATCH", `/reservation-requests/${modification.id}`, { token: operator.token, body: { comments: "x" } })).body.message).toBe(
+      "La solicitud no admite modificaciones en su estado actual",
+    );
+  });
+
+  it("rechazar: con motivo opcional, idempotente y con sus 400, 403 y 409", async () => {
+    const owner = await login("ricardo@sabormagico.pe");
+    const customerId = mockStore().customers[0]!.id;
+    const create = async () =>
+      (
+        await api<ReservationRequest>("POST", "/reservation-requests", {
+          token: operator.token,
+          body: { customerId, sourceChannel: "PHONE" },
+        })
+      ).body.id;
+    const reject = (id: string, body: unknown, token = owner.token) =>
+      api<OrError<ReservationRequest>>("POST", `/reservation-requests/${id}/reject`, { token, body });
+    const id = await create();
+    expect((await reject(id, {}, operator.token)).status).toBe(403);
+    expect((await reject(id, { reason: "", foo: true })).body.message).toEqual(["property foo should not exist", "reason should not be empty"]);
+    expect((await reject(id, { reason: 5 })).body.message).toEqual([
+      "reason must be shorter than or equal to 1000 characters",
+      "reason must be a string",
+    ]);
+    // Desde INCOMPLETE_DATA.
+    const ok = await reject(id, { reason: " Sin cupo " });
+    expect(ok).toMatchObject({ status: 200, body: { status: "REJECTED" } });
+    const again = await reject(id, { reason: "Otro" });
+    expect(again).toMatchObject({ status: 200, body: { updatedAt: ok.body.updatedAt } });
+    const detail = await api<ReservationRequestDetail>("GET", `/reservation-requests/${id}`, { token: owner.token });
+    expect(detail.body.statusHistory).toEqual([
+      expect.objectContaining({ previousStatus: "INCOMPLETE_DATA", newStatus: "REJECTED", actorType: "USER", actorId: owner.id, reason: "Sin cupo" }),
+    ]);
+    // Una rechazada no se cancela; una cancelada no se rechaza.
+    expect((await api("PATCH", `/reservation-requests/${id}/status`, { token: operator.token, body: { status: "CANCELLED" } })).status).toBe(409);
+    const cancelled = await create();
+    await api("PATCH", `/reservation-requests/${cancelled}/status`, { token: operator.token, body: { status: "CANCELLED" } });
+    expect((await reject(cancelled, {})).body).toMatchObject({ statusCode: 409, message: "La solicitud no se puede rechazar en su estado actual" });
+    // Sin body también vale.
+    const noBody = await create();
+    expect((await api<ReservationRequest>("POST", `/reservation-requests/${noBody}/reject`, { token: admin.token })).body.status).toBe("REJECTED");
+  });
+
+  it("conversación vinculada: filtro conversationId y reglas de alta y edición", async () => {
+    const store = mockStore();
+    const linked = store.requests.find((r) => r.conversationId !== null)!;
+    const list = await api<Paginated<ReservationRequest>>("GET", "/reservation-requests", {
+      token: admin.token,
+      query: { conversationId: linked.conversationId! },
+    });
+    expect(list.body.data.map((r) => r.id)).toEqual(store.requests.filter((r) => r.conversationId === linked.conversationId).map((r) => r.id));
+    expect(list.body.data[0]).toMatchObject({ conversationId: linked.conversationId });
+    expect((await api("GET", "/reservation-requests", { token: admin.token, query: { conversationId: "abc" } })).body.message).toEqual([
+      "conversationId must be a UUID",
+    ]);
+
+    const conv = store.conversations.find((c) => c.customerId !== linked.customerId)!;
+    const create = (body: Record<string, unknown>) =>
+      api<ReservationRequest>("POST", "/reservation-requests", { token: operator.token, body: { sourceChannel: "PHONE", ...body } });
+    expect((await create({ customerId: conv.customerId, conversationId: "8d2f4b6a-0c1e-4a3b-9d5f-7e9a1b3c5d7f" })).body).toMatchObject({
+      statusCode: 404,
+      message: "Conversación no encontrada",
+    });
+    expect((await create({ customerId: linked.customerId, conversationId: conv.id })).body).toMatchObject({
+      statusCode: 400,
+      message: "La conversación pertenece a otro cliente",
+    });
+    const own = await create({ customerId: conv.customerId, conversationId: conv.id });
+    expect(own.body).toMatchObject({ status: "INCOMPLETE_DATA", conversationId: conv.id });
+    // Cambiar el cliente con la conversación actual de otro cliente: 400; con conversationId null, válido.
+    const patch = (body: Record<string, unknown>) =>
+      api<OrError<ReservationRequest>>("PATCH", `/reservation-requests/${own.body.id}`, { token: operator.token, body });
+    expect((await patch({ customerId: linked.customerId })).body.message).toBe("La conversación pertenece a otro cliente");
+    expect((await patch({ customerId: linked.customerId, conversationId: null })).body).toMatchObject({
+      customerId: linked.customerId,
+      conversationId: null,
+    });
+    expect((await patch({ conversationId: linked.conversationId })).body.conversationId).toBe(linked.conversationId);
+  });
+});
+
+describe("configuración del restaurante (M9.1)", () => {
+  /** Body del PUT a partir del GET, sin los campos de solo lectura. */
+  async function putBody(): Promise<Record<string, unknown>> {
+    const current = (await api<RestaurantConfig>("GET", "/restaurant-config", { token: admin.token })).body;
+    const { id: _id, approvalResponsible: _r, createdAt: _c, updatedAt: _u, ...body } = current;
+    void _id;
+    void _r;
+    void _c;
+    void _u;
+    return body;
+  }
+  const put = (body: Record<string, unknown>) => api<OrError<RestaurantConfig>>("PUT", "/restaurant-config", { token: admin.token, body });
+
+  it("ownerWhatsappNumber: omitirlo conserva, null lo borra; E.164 y distinto de whatsappNumber", async () => {
+    const body = await putBody();
+    expect(body.ownerWhatsappNumber).toMatch(/^\+[1-9]\d{7,14}$/);
+    const stored = body.ownerWhatsappNumber;
+    const { ownerWhatsappNumber: _o, ...withoutOwner } = body;
+    void _o;
+    expect((await put(withoutOwner)).body.ownerWhatsappNumber).toBe(stored);
+    expect((await put({ ...body, ownerWhatsappNumber: " +51911222333 " })).body.ownerWhatsappNumber).toBe("+51911222333");
+    expect((await put({ ...body, ownerWhatsappNumber: null })).body.ownerWhatsappNumber).toBeNull();
+    expect((await put(withoutOwner)).body.ownerWhatsappNumber).toBeNull();
+
+    const bad = await put({ ...body, ownerWhatsappNumber: "987 654 321" });
+    expect(bad.status).toBe(400);
+    expect(bad.body.message).toContain("ownerWhatsappNumber debe usar formato internacional E.164");
+    expect((await put({ ...body, ownerWhatsappNumber: body.whatsappNumber })).body).toMatchObject({
+      statusCode: 400,
+      message: "ownerWhatsappNumber debe ser distinto de whatsappNumber",
+    });
+  });
+
+  it("approvalResponsibleId: omitido lo borra; debe existir, estar activo y tener OWNER", async () => {
+    const body = await putBody();
+    const ownerId = body.approvalResponsibleId as string;
+    expect(ownerId).toBeTruthy();
+    const { approvalResponsibleId: _a, ...withoutResponsible } = body;
+    void _a;
+    expect((await put(withoutResponsible)).body).toMatchObject({ approvalResponsibleId: null, approvalResponsible: null });
+    expect((await put({ ...body, approvalResponsibleId: "8d2f4b6a-0c1e-4a3b-9d5f-7e9a1b3c5d7f" })).body).toMatchObject({
+      statusCode: 400,
+      message: "El responsable de aprobación no existe",
+    });
+    expect((await put({ ...body, approvalResponsibleId: admin.id })).body).toMatchObject({
+      statusCode: 400,
+      message: "El responsable de aprobación debe tener el rol OWNER",
+    });
+    mockStore().users.find((u) => u.id === ownerId)!.isActive = false;
+    expect((await put(body)).body).toMatchObject({ statusCode: 400, message: "El responsable de aprobación debe estar activo" });
+    mockStore().users.find((u) => u.id === ownerId)!.isActive = true;
+    expect((await put(body)).body).toMatchObject({ approvalResponsibleId: ownerId, approvalResponsible: { id: ownerId } });
+    expect((await put({ ...body, approvalResponsibleId: "" })).body.message).toEqual(["approvalResponsibleId must be a UUID"]);
+  });
 });
 
 describe("reservas", () => {
@@ -1448,7 +1760,7 @@ describe("envío por Messenger", () => {
 });
 
 describe("datos de ejemplo", () => {
-  it("todo OUTBOUND tiene autor y cada mensaje de Samanta sale de un borrador APPROVED de WhatsApp", () => {
+  it("todo OUTBOUND tiene autor y cada mensaje de Samanta sale de un borrador APPROVED (MANUAL en WhatsApp o AUTO)", () => {
     const store = mockStore();
     const outbound = store.messages.filter((m) => m.direction === "OUTBOUND");
     expect(outbound.length).toBeGreaterThan(0);
@@ -1461,12 +1773,88 @@ describe("datos de ejemplo", () => {
         direction: "OUTBOUND",
         authorUserId: d.reviewedById,
         content: d.content,
-        channel: "WHATSAPP",
       });
+      if (d.mode === "MANUAL") expect(m.channel).toBe("WHATSAPP");
+      else expect(d).toMatchObject({ createdById: SAMANTA_USER_ID, reviewedById: SAMANTA_USER_ID, idempotencyKey: `auto-${d.sourceMessageId}` });
       expect(
         store.messages.find((x) => x.id === d.sourceMessageId)?.direction,
       ).toBe("INBOUND");
     }
+    // Toda conversación trae el motivo de la pausa (null si no está en pausa).
+    for (const c of store.conversations) {
+      expect(c.assistantPauseReason === null).toBe(!c.isAssistantPaused);
+      expect(c.assistantPausedAt === null).toBe(!c.isAssistantPaused);
+    }
+  });
+
+  it("flujo del propietario: hay solicitudes en cada estado y la conversación del «Propietario»", async () => {
+    const store = mockStore();
+    const config = store.config!;
+    const owner = store.users.find((u) => u.id === config.approvalResponsibleId)!;
+    expect(owner).toMatchObject({ isActive: true, roles: ["OWNER"] });
+    expect(config.ownerWhatsappNumber).toMatch(/^\+51\d{9}$/);
+    // SAMANTA_USER_ID no es un usuario del CRM.
+    const users = await api<User[]>("GET", "/users", { token: admin.token });
+    expect(users.body.some((u) => u.id === SAMANTA_USER_ID)).toBe(false);
+
+    const statuses = new Set(store.requests.map((r) => r.status));
+    for (const s of ["INCOMPLETE_DATA", "READY_TO_SEND", "SENT_TO_OWNER", "WAITING_RESPONSE", "ACCEPTED", "REJECTED", "MODIFICATION_REQUESTED", "CANCELLED"]) {
+      expect(statuses.has(s as never)).toBe(true);
+    }
+    const detail = async (id: string) => (await api<ReservationRequestDetail>("GET", `/reservation-requests/${id}`, { token: admin.token })).body;
+    const details = await Promise.all(store.requests.map((r) => detail(r.id)));
+
+    // Aceptada por el propietario: reserva, SYSTEM + SYSTEM + OWNER y aviso entregado.
+    const byOwner = details.find((d) => d.status === "ACCEPTED" && d.statusHistory.some((h) => h.actorType === "OWNER"))!;
+    expect(byOwner.statusHistory.map((h) => h.actorType)).toEqual(["SYSTEM", "SYSTEM", "OWNER"]);
+    expect(byOwner.statusHistory[2]!.actor).toEqual({ id: owner.id, firstName: owner.firstName, lastName: owner.lastName });
+    expect(byOwner.reservation).toMatchObject({ status: "CONFIRMED" });
+    expect(byOwner.ownerMessage).toMatchObject({ status: "READ" });
+    expect(byOwner.customerNoticeMessage).toMatchObject({ status: "DELIVERED", templateName: null, conversationId: byOwner.conversationId });
+    // Aceptada en el CRM: entrada USER y sin aviso.
+    const inCrm = details.find((d) => d.status === "ACCEPTED" && d.statusHistory.some((h) => h.actorType === "USER"))!;
+    expect(inCrm).toMatchObject({ customerNoticeMessage: null, customerNoticeError: null, ownerMessage: null });
+    expect(inCrm.reservation).not.toBeNull();
+    // Rechazada por el propietario sin poder avisar (Instagram con la ventana cerrada).
+    const rejected = details.find((d) => d.status === "REJECTED" && d.customerNoticeError !== null)!;
+    expect(rejected).toMatchObject({ customerNoticeError: "WINDOW_CLOSED", customerNoticeMessage: null });
+    expect(rejected.statusHistory.at(-1)).toMatchObject({ actorType: "OWNER", reason: "Rechazada por el propietario por WhatsApp." });
+    expect(rejected.comments).toContain("CRM: no se avisó al cliente la decisión del propietario (rechazada): ");
+    // Cambio propuesto: propuesta en comments y el cliente en SAMANTA_HANDOFF.
+    const modification = details.find((d) => d.status === "MODIFICATION_REQUESTED")!;
+    expect(modification.comments).toMatch(/CRM: propuesta del propietario \(\d{2}\/\d{2},? \d{2}:\d{2}\): /);
+    expect(store.conversations.find((c) => c.id === modification.conversationId)).toMatchObject({ assistantPauseReason: "SAMANTA_HANDOFF" });
+    // La plantilla falló: volvió a READY_TO_SEND; es de la web (SM-…).
+    const failed = details.find((d) => d.ownerMessage?.status === "FAILED")!;
+    expect(failed).toMatchObject({ status: "READY_TO_SEND", sourceChannel: "WEBSITE" });
+    expect(failed.externalReference).toMatch(/^SM-\d{8}-[0-9A-F]{6}$/);
+    expect(failed.statusHistory.at(-1)!.reason).toContain("No se reenvía: apruébala o recházala a mano.");
+    // Las de Samanta están vinculadas y llevan su nota.
+    const bySamanta = details.filter((d) => d.conversationId !== null);
+    expect(bySamanta.length).toBeGreaterThanOrEqual(4);
+    for (const d of bySamanta) expect(d.comments).toContain("CRM: registrada por Samanta con la confirmación del cliente en la conversación.");
+
+    // Borradores AUTO: CREATED y ALREADY_DECIDED (firmado por Samanta).
+    expect(store.drafts.some((d) => d.mode === "AUTO" && d.reservationOutcome === "CREATED")).toBe(true);
+    const decided = store.drafts.find((d) => d.reservationOutcome === "ALREADY_DECIDED")!;
+    expect(store.messages.find((m) => m.id === decided.outboundMessageId)).toMatchObject({ direction: "OUTBOUND", authorUserId: SAMANTA_USER_ID });
+    expect(store.drafts.filter((d) => d.reservationOutcome === "PROPOSED").every((d) => d.reservationProposal !== null && d.reservationRequestId !== null)).toBe(true);
+
+    // Contacto «Propietario» con su conversación en pausa MANUAL.
+    const contact = store.customers.find((c) => c.firstName === "Propietario")!;
+    expect(contact).toMatchObject({ phone: config.ownerWhatsappNumber, sourceChannel: "WHATSAPP" });
+    expect(contact.notes).toMatch(/^CRM: número del propietario/);
+    const ownerConv = store.conversations.find((c) => c.customerId === contact.id)!;
+    expect(ownerConv).toMatchObject({ channel: "WHATSAPP", isAssistantPaused: true, assistantPauseReason: "MANUAL" });
+    const ownerMessages = store.messages.filter((m) => m.conversationId === ownerConv.id);
+    expect(ownerMessages.filter((m) => m.direction === "OUTBOUND").every((m) => m.authorUserId === SAMANTA_USER_ID)).toBe(true);
+    expect(ownerMessages.some((m) => m.direction === "INBOUND")).toBe(true);
+    // Reanudarla es posible (como en bk-crm); el siguiente mensaje del propietario la vuelve a pausar.
+    const resumed = await api<Conversation>("PATCH", `/conversations/${ownerConv.id}/assistant`, { token: admin.token, body: { paused: false } });
+    expect(resumed.body.isAssistantPaused).toBe(false);
+    const waiting = store.requests.find((r) => r.status === "WAITING_RESPONSE")!;
+    runSimulator({ accion: "dueno", requestId: waiting.id, decision: "ACEPTAR" });
+    expect(store.conversations.find((c) => c.id === ownerConv.id)).toMatchObject({ isAssistantPaused: true, assistantPauseReason: "MANUAL" });
   });
 
   it("hay clientes de Messenger sin teléfono ni correo, con el nombre en firstName y sin nombre", () => {

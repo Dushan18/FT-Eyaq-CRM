@@ -135,7 +135,7 @@ function DialogPanel({
         className={cn(
           "flex w-full flex-col overflow-hidden bg-white shadow-[0_20px_60px_rgba(14,24,56,.25)] outline-none",
           placement === "right"
-            ? "h-dvh max-w-sm sm:rounded-l-2xl"
+            ? cn("h-dvh sm:rounded-l-2xl", size === "lg" ? "max-w-xl" : "max-w-sm")
             : cn("max-h-[min(90dvh,760px)] rounded-2xl", size === "sm" ? "max-w-sm" : size === "lg" ? "max-w-2xl" : "max-w-lg"),
         )}
       >

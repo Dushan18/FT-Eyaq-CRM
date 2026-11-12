@@ -8,6 +8,7 @@ import { EmpresaFields, PolicyFields, TimeoutField } from "./config-fields";
 import { empresaValues, emptySetupValues, pickValues, setupRequestInput, type EmpresaValues, type SetupValues } from "./config-form";
 import { validateConfig, validateFields, withoutErrors, type FieldErrors } from "./config-schema";
 import { ConfigGate, ReadOnlyNotice, SaveArea, TabBody, TabTitle, focusFirstInvalid } from "./config-ui";
+import { OwnerApprovalCard } from "./owner-approval-card";
 import { useConfigSave, useDraft, useResetOnHide, type ConfigSave } from "./use-config-save";
 
 /** Ajustes › Empresa. Si el restaurante aún no está configurado, ADMIN ve el formulario inicial. */
@@ -17,12 +18,20 @@ export function EmpresaView() {
   // Un solo guardado para el alta y la edición: tras el alta, la pestaña muestra el aviso de guardado.
   const save = useConfigSave();
   useResetOnHide(save.reset);
+  // Guardado propio: sus avisos y errores no se mezclan con los de los datos de la empresa.
+  const ownerSave = useConfigSave();
+  useResetOnHide(ownerSave.reset);
 
   return (
     <TabBody>
       <TabTitle>Datos de la empresa</TabTitle>
       <ConfigGate setup={canEdit ? <SetupForm save={save} /> : undefined}>
-        {(config) => <EmpresaForm config={config} save={save} canEdit={canEdit} />}
+        {(config) => (
+          <>
+            <EmpresaForm config={config} save={save} canEdit={canEdit} />
+            <OwnerApprovalCard config={config} save={ownerSave} canEdit={canEdit} />
+          </>
+        )}
       </ConfigGate>
     </TabBody>
   );

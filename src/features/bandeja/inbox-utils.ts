@@ -10,7 +10,7 @@ import type {
   Reservation,
   ReservationRequest,
 } from "@/lib/api/types";
-import { isSendableChannel } from "@/lib/api/types";
+import { isSendableChannel, SAMANTA_USER_ID } from "@/lib/api/types";
 import { isConnectionError, isDisabledInServer } from "@/lib/api/errors";
 import {
   outboundErrorKind,
@@ -172,7 +172,10 @@ export function outboundAuthorLabel(
   assignee: Conversation["assignedUser"],
   samantaIds?: ReadonlySet<string>,
 ): string {
-  if (messageAuthor(m, samantaIds) === "samanta") return "Samanta · IA";
+  if (messageAuthor(m, samantaIds) === "samanta") {
+    // Sin borrador aprobado detrás, es un texto fijo del backend (p. ej. la confirmación al propietario).
+    return samantaIds?.has(m.id) || m.authorUserId !== SAMANTA_USER_ID ? "Samanta · IA" : "Samanta · automático";
+  }
   if (m.authorUserId && m.authorUserId === meId) return "Tú";
   if (assignee && m.authorUserId === assignee.id)
     return personName(assignee.firstName, assignee.lastName, "Equipo");
@@ -242,7 +245,41 @@ export interface ConversationControls {
  * Qué controles ve el usuario. Reglas del backend: ADMIN asigna a cualquiera; OPERATOR solo toma
  * conversaciones libres o suelta las suyas (403 en otro caso); OWNER y SUPPORT no modifican nada.
  */
+/**
+ * Conversación del contacto «Propietario» (M9.1): la del cliente cuyo teléfono es ownerWhatsappNumber. Ahí
+ * el backend le envía las solicitudes y procesa sus respuestas; Samanta está en pausa MANUAL y no debe
+ * reanudarse.
+ */
+export function isOwnerConversation(
+  conversation: { channel: ContactChannel; customer: { phone: string | null } },
+  ownerWhatsappNumber: string | null | undefined,
+): boolean {
+  if (!ownerWhatsappNumber || conversation.channel !== "WHATSAPP" || !conversation.customer.phone) return false;
+  const compact = (value: string) => value.replace(/[\s().-]/g, "");
+  return compact(conversation.customer.phone) === compact(ownerWhatsappNumber);
+}
+
+export const OWNER_CONVERSATION_NOTICE =
+  "Es la conversación del propietario: aquí recibe las solicitudes para aprobar y el CRM procesa sus respuestas. Samanta no le responde: no la reanudes.";
+
 export function conversationControls(
+  conversation: ControlConversation,
+  meId: string | null,
+  roles: readonly RoleCode[],
+  options: { owner?: boolean } = {},
+): ConversationControls {
+  // Propietario: ni «Reanudar» ni «Devolver a Samanta» (quitarían la pausa MANUAL); sí se puede tomar.
+  if (options.owner) {
+    const base = ownerlessControls(conversation, meId, roles);
+    return {
+      pause: { visible: false, paused: conversation.isAssistantPaused },
+      transfer: base.transfer.kind === "release" ? { ...base.transfer, visible: false } : base.transfer,
+    };
+  }
+  return ownerlessControls(conversation, meId, roles);
+}
+
+function ownerlessControls(
   conversation: ControlConversation,
   meId: string | null,
   roles: readonly RoleCode[],

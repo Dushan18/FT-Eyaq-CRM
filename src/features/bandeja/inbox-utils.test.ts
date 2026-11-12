@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "@/lib/api/client";
+import { SAMANTA_USER_ID } from "@/lib/api/types";
 import type {
   Conversation,
   Message,
@@ -13,6 +14,8 @@ import {
   conversationControls,
   conversationTag,
   estimateReplyWindow,
+  isOwnerConversation,
+  OWNER_CONVERSATION_NOTICE,
   latestRequestByCustomer,
   mergeMessages,
   outboundAuthorLabel,
@@ -66,6 +69,8 @@ function conversation(partial: Partial<Conversation> = {}): Conversation {
     customerId: "cu-1",
     channel: "WHATSAPP",
     isAssistantPaused: false,
+    assistantPauseReason: null,
+    assistantPausedAt: null,
     assignedUserId: null,
     lastMessageAt: "2026-10-14T17:00:00.000Z",
     createdAt: "2026-10-14T16:00:00.000Z",
@@ -255,7 +260,7 @@ describe("etiqueta de la fila", () => {
     ]);
     expect(map.get("cu-1")?.status).toBe("WAITING_RESPONSE");
     expect(conversationTag(conversation(), map.get("cu-1")).label).toBe(
-      "Esperando al dueño",
+      "Esperando al propietario",
     );
   });
 
@@ -572,5 +577,35 @@ describe("historial del cliente", () => {
       ["R-2026-000140", "Completada"],
       ["RES-2025-000312", "Rechazada"],
     ]);
+  });
+});
+
+describe("conversación del propietario (M9.1)", () => {
+  it("se reconoce por el teléfono de WhatsApp igual a ownerWhatsappNumber", () => {
+    const owner = conversation({ customer: { id: "cu-9", firstName: "Propietario", lastName: null, phone: "+51912345678", email: null } });
+    expect(isOwnerConversation(owner, "+51912345678")).toBe(true);
+    expect(isOwnerConversation(owner, "+51 912 345 678")).toBe(true);
+    expect(isOwnerConversation(owner, null)).toBe(false);
+    expect(isOwnerConversation(owner, "+51987654321")).toBe(false);
+    expect(isOwnerConversation({ ...owner, channel: "FACEBOOK" }, "+51912345678")).toBe(false);
+  });
+
+  it("no ofrece «Reanudar» ni «Devolver a Samanta» (quitarían la pausa MANUAL)", () => {
+    const paused = conversation({ isAssistantPaused: true, assistantPauseReason: "MANUAL", assistantPausedAt: "2026-11-10T15:00:00.000Z" });
+    const normal = conversationControls(paused, "me", ["ADMIN"]);
+    expect(normal.pause).toEqual({ visible: true, paused: true });
+    const owner = conversationControls(paused, "me", ["ADMIN"], { owner: true });
+    expect(owner.pause.visible).toBe(false);
+    expect(owner.transfer).toMatchObject({ kind: "take", visible: true });
+
+    const held = conversation({ isAssistantPaused: true, assignedUserId: "me", assistantPauseReason: "MANUAL" });
+    expect(conversationControls(held, "me", ["ADMIN"], { owner: true }).transfer).toMatchObject({ kind: "release", visible: false });
+    expect(OWNER_CONVERSATION_NOTICE).toMatch(/no la reanudes/);
+  });
+
+  it("los textos del backend firmados con SAMANTA_USER_ID son de Samanta; con borrador, de la IA", () => {
+    const fromBackend = { id: "m-50", direction: "OUTBOUND" as const, authorUserId: SAMANTA_USER_ID };
+    expect(outboundAuthorLabel(fromBackend, "me", null)).toBe("Samanta · automático");
+    expect(outboundAuthorLabel(fromBackend, "me", null, new Set(["m-50"]))).toBe("Samanta · IA");
   });
 });

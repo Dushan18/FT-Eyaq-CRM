@@ -11,7 +11,7 @@ import {
 } from "react";
 import { ApiError, newIdempotencyKey } from "@/lib/api/client";
 import { conversationsApi } from "@/lib/api/endpoints";
-import type { Conversation, Message } from "@/lib/api/types";
+import type { Conversation, Message, SamantaReservationOutcome } from "@/lib/api/types";
 import {
   isSendableChannel,
   OUTBOUND_CONTENT_MAX_LENGTH,
@@ -31,7 +31,8 @@ import { cn, personName } from "@/lib/format/text";
 import { useNow } from "@/lib/hooks/use-now";
 import { useRestaurant } from "@/lib/restaurant";
 import { ChevronLeft } from "lucide-react";
-import { Avatar, Button, Panel } from "@/components/ui/primitives";
+import { Avatar, Button, Panel, Tag } from "@/components/ui/primitives";
+import { TONES } from "@/lib/domain/tones";
 import {
   EmptyState,
   ErrorState,
@@ -42,7 +43,9 @@ import {
   composerState,
   conversationControls,
   estimateReplyWindow,
+  isOwnerConversation,
   lastInboundAt,
+  OWNER_CONVERSATION_NOTICE,
   messageTimestamp,
   outboundAuthorLabel,
   outboundStatusView,
@@ -61,7 +64,12 @@ import {
   useConversationMessages,
   useInvalidateInbox,
 } from "./use-inbox";
-import { samantaMessageIds, useAssistantDrafts } from "./use-samanta";
+import {
+  RESERVATION_OUTCOME_LABEL,
+  samantaMessageIds,
+  samantaReservationOutcomes,
+  useAssistantDrafts,
+} from "./use-samanta";
 
 /** Panel central: cabecera con el modo de atención, historial y cuadro de texto. */
 export function ChatPanel({
@@ -169,7 +177,7 @@ function ChatConversation({
 }) {
   const session = useSession();
   const meId = session.user?.id ?? null;
-  const { timeZone } = useRestaurant();
+  const { timeZone, config } = useRestaurant();
   const now = useNow(30_000);
   const history = useConversationMessages(conversation.id);
   const actions = useConversationActions(conversation, meId);
@@ -178,6 +186,8 @@ function ChatConversation({
     () => samantaMessageIds(drafts.data?.data),
     [drafts.data],
   );
+  const outcomes = useMemo(() => samantaReservationOutcomes(drafts.data?.data), [drafts.data]);
+  const owner = isOwnerConversation(conversation, config?.ownerWhatsappNumber);
   const [actionError, setActionError] = useState<string | null>(null);
 
   useMarkAsRead(
@@ -189,7 +199,7 @@ function ChatConversation({
   const name = customerName(conversation.customer, conversation.channel);
   const ch = channelMeta(conversation.channel);
   const lastInbound = lastInboundAt(history.messages);
-  const controls = conversationControls(conversation, meId, session.roles);
+  const controls = conversationControls(conversation, meId, session.roles, { owner });
   // Ventana de 24 h estimada en los dos canales con envío (WhatsApp y Messenger); el backend manda.
   const replyWindow =
     isSendableChannel(conversation.channel) && history.messages.length > 0
@@ -222,7 +232,10 @@ function ChatConversation({
         {onBack ? <BackButton onClick={onBack} /> : null}
         <Avatar text={customerInitials(conversation.customer)} size={38} />
         <div className="min-w-0 flex-1 basis-36">
-          <h2 className="m-0 truncate text-base font-bold">{name}</h2>
+          <h2 className="m-0 flex items-center gap-2 truncate text-base font-bold">
+            <span className="truncate">{name}</span>
+            {owner ? <Tag tone={TONES.orange}>Propietario</Tag> : null}
+          </h2>
           <div className="flex items-center gap-2 overflow-hidden whitespace-nowrap text-[12.5px] text-muted">
             <span>{ch.label}</span>
             {lastInbound !== null ? (
@@ -277,6 +290,12 @@ function ChatConversation({
         </div>
       </header>
 
+      {owner ? (
+        <div className="border-b border-line px-4.5 py-2">
+          <InlineNotice tone="warning">{OWNER_CONVERSATION_NOTICE}</InlineNotice>
+        </div>
+      ) : null}
+
       {actionError ? (
         <div className="border-b border-line px-4.5 py-2">
           <InlineNotice tone="error">{actionError}</InlineNotice>
@@ -290,6 +309,7 @@ function ChatConversation({
         timeZone={timeZone}
         now={now}
         samantaIds={samantaIds}
+        outcomes={outcomes}
       />
 
       <SamantaPanel
@@ -388,6 +408,7 @@ function MessageList({
   timeZone,
   now,
   samantaIds,
+  outcomes,
 }: {
   conversation: Conversation;
   history: History;
@@ -396,6 +417,7 @@ function MessageList({
   now: number;
   /** Mensajes que salieron de un borrador de Samanta aprobado. */
   samantaIds: ReadonlySet<string>;
+  outcomes: ReadonlyMap<string, SamantaReservationOutcome>;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
@@ -486,6 +508,7 @@ function MessageList({
               timeZone={timeZone}
               now={now}
               samantaIds={samantaIds}
+              outcome={outcomes.get(m.id)}
             />
           ))}
         </>
@@ -507,6 +530,7 @@ function Bubble({
   timeZone,
   now,
   samantaIds,
+  outcome,
 }: {
   message: Message;
   meId: string | null;
@@ -514,6 +538,8 @@ function Bubble({
   timeZone: string;
   now: number;
   samantaIds: ReadonlySet<string>;
+  /** Qué hizo la acción de reserva de Samanta en este mensaje (respuestas automáticas). */
+  outcome?: SamantaReservationOutcome;
 }) {
   const author = messageAuthor(m, samantaIds);
   const time = formatMessageTime(messageTimestamp(m), timeZone, now);
@@ -550,6 +576,7 @@ function Bubble({
         <span className="whitespace-nowrap">
           {outboundAuthorLabel(m, meId, assignee, samantaIds)} · {time}
         </span>
+        {outcome ? <span className="font-semibold text-brand">· {RESERVATION_OUTCOME_LABEL[outcome]}</span> : null}
         {status ? (
           <span className={STATUS_CLASS[status.tone]}>· {status.text}</span>
         ) : null}

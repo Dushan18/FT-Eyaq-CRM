@@ -163,8 +163,8 @@ function ReservationSummary({
     staleTime: 5 * 60_000,
   });
   const status = RESERVATION_STATUS[r.status];
-  // En bk-crm toda reserva se registra con «Nueva reserva» (reservationRequestId siempre es null); el modo
-  // simulado también crea reservas a partir de solicitudes aceptadas.
+  // Con reservationRequestId, la reserva nació al aceptar una solicitud (el propietario por WhatsApp o
+  // POST …/approve desde el CRM); sin él, se registró con «Nueva reserva».
   const fromRequest = r.reservationRequestId !== null;
   const manageable = canManageReservation(r.status, permissions.viewer.canEdit);
 
@@ -185,7 +185,7 @@ function ReservationSummary({
         ]}
       />
       <div className="flex flex-wrap gap-1.5">
-        <Pill tone={fromRequest ? TONES.blue : TONES.gray}>{fromRequest ? "Desde una solicitud" : "Registro manual"}</Pill>
+        <Pill tone={fromRequest ? TONES.green : TONES.gray}>{fromRequest ? "Aceptada por el propietario" : "Registrada en el CRM"}</Pill>
         <Pill tone={status.tone}>{status.label}</Pill>
       </div>
 

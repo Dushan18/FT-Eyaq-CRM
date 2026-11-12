@@ -144,15 +144,25 @@ export function politicasValues(config: RestaurantConfig): PoliticasValues {
 }
 
 export interface SamantaValues {
-  /** "" = sin responsable. */
-  approvalResponsibleId: string;
   responseTimeoutMinutes: string;
 }
 
 export function samantaValues(config: RestaurantConfig): SamantaValues {
+  return { responseTimeoutMinutes: String(config.responseTimeoutMinutes) };
+}
+
+/** Ajustes › Empresa › Aprobación del propietario (M9.1). */
+export interface OwnerApprovalValues {
+  /** "" = sin número. */
+  ownerWhatsappNumber: string;
+  /** "" = sin responsable. */
+  approvalResponsibleId: string;
+}
+
+export function ownerApprovalValues(config: RestaurantConfig): OwnerApprovalValues {
   return {
+    ownerWhatsappNumber: config.ownerWhatsappNumber ?? "",
     approvalResponsibleId: config.approvalResponsibleId ?? "",
-    responseTimeoutMinutes: String(config.responseTimeoutMinutes),
   };
 }
 

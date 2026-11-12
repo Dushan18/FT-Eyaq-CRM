@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { customersApi, requestsApi, reservationsApi } from "@/lib/api/endpoints";
@@ -86,10 +87,12 @@ function CustomerDetails({ conversation }: { conversation: Conversation }) {
           <RequestCard request={latest} />
         ) : (
           <div className="rounded-[14px] border border-dashed border-dashed-line p-4 text-[13px] leading-normal text-muted">
-            Aún no hay solicitud para este cliente. Cuando confirme fecha, hora y personas, regístrala desde el CRM.
+            Aún no hay solicitud para este cliente. Samanta la registra cuando el cliente confirma el resumen; también puedes
+            crearla desde el CRM.
           </div>
         )}
       </Section>
+      <LinkedRequestsSection conversationId={conversation.id} />
       <CustomerSection customerId={customerId} />
       <HistorySection customerId={customerId} requests={requests} currentRequestId={latest?.id ?? null} />
       {/* Mismo alta que en Solicitudes, con el cliente y el canal de esta conversación. Invalida qk.requestsAll. */}
@@ -101,6 +104,46 @@ function CustomerDetails({ conversation }: { conversation: Conversation }) {
       />
     </>
   );
+}
+
+const LINKED_REQUESTS = 10;
+
+/** Solicitudes vinculadas a esta conversación (GET /reservation-requests?conversationId=…), p. ej. las que registró Samanta. */
+function LinkedRequestsSection({ conversationId }: { conversationId: string }) {
+  const { timeZone } = useRestaurant();
+  const linked = useQuery({
+    queryKey: qk.requests({ conversationId, limit: LINKED_REQUESTS }),
+    queryFn: () => requestsApi.list({ conversationId, limit: LINKED_REQUESTS }),
+    // El propietario decide por WhatsApp: el estado cambia sin acción del usuario.
+    refetchInterval: 15_000,
+  });
+  let body: ReactNode;
+  if (linked.isLoading) body = <LoadingState className="py-3" />;
+  else if (!linked.data) {
+    body = <ErrorState error={linked.error} subject="las solicitudes" onRetry={() => void linked.refetch()} className="py-3" />;
+  } else if (linked.data.data.length === 0) {
+    body = <div className="text-[13px] text-subtle">Ninguna solicitud vinculada a esta conversación.</div>;
+  } else {
+    body = (
+      <ul className="m-0 flex list-none flex-col gap-2 p-0" aria-label="Solicitudes de esta conversación">
+        {linked.data.data.map((r) => {
+          const status = requestStatusView(r.status);
+          return (
+            <li key={r.id} className="flex items-center justify-between gap-2 rounded-[10px] bg-surface px-3 py-2.5">
+              <div className="flex min-w-0 flex-col gap-0.5">
+                <Link href={`/solicitudes?solicitud=${r.id}`} className="truncate text-[13px] font-semibold text-brand hover:underline">
+                  {r.code}
+                </Link>
+                <span className="text-[11.5px] text-subtle">{r.reservationAt ? formatDayTime(r.reservationAt, timeZone) : "Fecha por definir"}</span>
+              </div>
+              <Pill tone={status.tone}>{status.label}</Pill>
+            </li>
+          );
+        })}
+      </ul>
+    );
+  }
+  return <Section title="SOLICITUDES DE ESTA CONVERSACIÓN">{body}</Section>;
 }
 
 function Section({ title, aside, children }: { title: string; aside?: ReactNode; children: ReactNode }) {

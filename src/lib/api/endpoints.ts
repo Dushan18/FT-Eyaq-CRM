@@ -6,6 +6,10 @@
 import { apiFetch, newIdempotencyKey } from "./client";
 import type {
   AssignConversationRequest,
+  CancelReservationRequestBody,
+  RejectReservationRequestBody,
+  ReservationRequestApproval,
+  ReservationRequestDetail,
   AssignReservationBody,
   CommercialApprovalStatus,
   CommercialCategory,
@@ -162,9 +166,24 @@ export const customersApi = {
 export const requestsApi = {
   list: (query: ReservationRequestListQuery) =>
     apiFetch<Paginated<ReservationRequest>>("/reservation-requests", { query }),
-  get: (id: string) => apiFetch<ReservationRequest>(`/reservation-requests/${id}`),
-  cancel: (id: string) =>
-    apiFetch<ReservationRequest>(`/reservation-requests/${id}/status`, { method: "PATCH", body: { status: "CANCELLED" } }),
+  /** GET /reservation-requests/:id: la solicitud más su historial, la reserva, y los mensajes al propietario y al cliente. */
+  get: (id: string) => apiFetch<ReservationRequestDetail>(`/reservation-requests/${id}`),
+  /** PATCH …/status con CANCELLED (solo en INCOMPLETE_DATA o READY_TO_SEND). El motivo queda en el historial. */
+  cancel: (id: string, reason?: string) => {
+    const body: CancelReservationRequestBody = reason ? { status: "CANCELLED", reason } : { status: "CANCELLED" };
+    return apiFetch<ReservationRequest>(`/reservation-requests/${id}/status`, { method: "PATCH", body });
+  },
+  /**
+   * POST /reservation-requests/:id/approve, sin body (ADMIN y OWNER). Crea la reserva CONFIRMED y pasa la
+   * solicitud a ACCEPTED. Idempotente: repetirla devuelve la misma reserva. No avisa al cliente.
+   */
+  approve: (id: string) =>
+    apiFetch<ReservationRequestApproval>(`/reservation-requests/${id}/approve`, { method: "POST" }),
+  /** POST /reservation-requests/:id/reject (ADMIN y OWNER). Sin motivo, el body es {}. No avisa al cliente. */
+  reject: (id: string, reason?: string) => {
+    const body: RejectReservationRequestBody = reason ? { reason } : {};
+    return apiFetch<ReservationRequest>(`/reservation-requests/${id}/reject`, { method: "POST", body });
+  },
   /** POST /reservation-requests (no es idempotente: un reintento crea otra solicitud). */
   create: (body: CreateReservationRequestBody) =>
     apiFetch<ReservationRequest>("/reservation-requests", { method: "POST", body }),

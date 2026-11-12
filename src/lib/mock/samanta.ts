@@ -1,10 +1,13 @@
 /**
  * Samanta en el backend simulado: borradores con revisión humana, como en bk-crm (Parte 04).
  * La «IA» es instantánea y determinista: una plantilla en español a partir del último mensaje del cliente
- * y del nombre del negocio, sin datos personales. Todo mensaje de Samanta sale de un borrador APPROVED.
+ * y del nombre del negocio, sin datos personales. Todo mensaje de Samanta sale de un borrador APPROVED:
+ * MANUAL (lo aprobó una persona, que queda como autora) o AUTO (Samanta automática; autor SAMANTA_USER_ID).
+ * Las rutas solo crean borradores MANUAL; los AUTO los crean el seed y el simulador.
  */
 import { createHash } from "node:crypto";
-import type { Message, SamantaDraft, SamantaIntent } from "@/lib/api/types";
+import type { Message, SamantaDraft, SamantaIntent, SamantaReservationOutcome, SamantaReservationProposal } from "@/lib/api/types";
+import { SAMANTA_USER_ID } from "@/lib/api/types";
 import { normalizeName } from "./http";
 import { iso, lastSequence, uuid, type MockStore } from "./store";
 
@@ -146,7 +149,7 @@ export function composeReply(sourceText: string, businessName: string): Composed
  * venció expiresAt o (al editar y aprobar) cambió la información comercial.
  */
 export function refreshDraft(store: MockStore, draft: SamantaDraft, now: number, opts: { checkKnowledge?: boolean } = {}) {
-  if (draft.status === "GENERATING" && now > Date.parse(draft.generationExpiresAt)) {
+  if (draft.status === "GENERATING" && draft.generationExpiresAt !== null && now > Date.parse(draft.generationExpiresAt)) {
     draft.status = "FAILED";
     draft.errorCode = "AI_GENERATION_EXPIRED";
     draft.updatedAt = iso(now);
@@ -203,11 +206,78 @@ export function approvedDraft(input: {
     inputTokens: composed.inputTokens,
     outputTokens: composed.outputTokens,
     errorCode: null,
+    mode: "MANUAL",
+    availableAt: null,
+    generationStartedAt: iso(input.requestedAt),
     generationExpiresAt: iso(input.requestedAt + GENERATION_WINDOW_MS),
     expiresAt: iso(input.requestedAt + DRAFT_TTL_MS),
     reviewedAt: iso(input.approvedAt),
     outboundMessageId: outbound.id,
+    reservationProposal: null,
+    reservationRequestId: null,
+    reservationOutcome: null,
     createdAt: iso(input.requestedAt),
     updatedAt: iso(input.approvedAt),
+  };
+}
+
+/** SAMANTA_AUTO_DELAY_MS: la respuesta automática espera 8 s por si el cliente sigue escribiendo. */
+export const SAMANTA_AUTO_DELAY_MS = 8_000;
+export const SAMANTA_AUTO_PROMPT_VERSION = "samanta-v4";
+
+/**
+ * Borrador AUTO ya enviado (Samanta automática con envío activo): lo crea y lo aprueba SAMANTA_USER_ID, y su
+ * OUTBOUND tiene a SAMANTA_USER_ID como autor. Con `reservationOutcome`, `content` es el texto fijo del backend.
+ */
+export function autoDraft(input: {
+  source: Message;
+  outbound: Message;
+  knowledgeHash: string;
+  reservationOutcome?: SamantaReservationOutcome | null;
+  reservationProposal?: SamantaReservationProposal | null;
+  reservationRequestId?: string | null;
+  requiresHuman?: boolean;
+}): SamantaDraft {
+  const { source, outbound } = input;
+  const arrived = Date.parse(source.receivedAt ?? source.createdAt);
+  const sentAt = Date.parse(outbound.createdAt);
+  // El simulador responde al instante: nunca después del envío.
+  const availableAt = Math.min(arrived + SAMANTA_AUTO_DELAY_MS, sentAt);
+  const composed = composeReply(source.content ?? "", "");
+  return {
+    id: uuid(),
+    conversationId: outbound.conversationId,
+    sourceMessageId: source.id,
+    baselineSequence: source.sequence,
+    idempotencyKey: `auto-${source.id}`,
+    createdById: SAMANTA_USER_ID,
+    reviewedById: SAMANTA_USER_ID,
+    editedById: null,
+    status: "APPROVED",
+    mode: "AUTO",
+    revision: 1,
+    model: SAMANTA_MODEL,
+    promptVersion: SAMANTA_AUTO_PROMPT_VERSION,
+    knowledgeHash: input.knowledgeHash,
+    // Con una acción de reserva la IA puede no escribir texto: el backend pone el texto fijo.
+    originalContent: input.reservationOutcome ? "" : outbound.content,
+    content: outbound.content,
+    intent: input.reservationOutcome ? "RESERVATION" : composed.intent,
+    requiresHuman: input.requiresHuman ?? false,
+    missingFields: [],
+    inputTokens: composed.inputTokens,
+    outputTokens: Math.ceil((outbound.content ?? "").length / 4),
+    errorCode: null,
+    availableAt: iso(availableAt),
+    generationStartedAt: iso(availableAt),
+    generationExpiresAt: iso(availableAt + GENERATION_WINDOW_MS),
+    expiresAt: iso(arrived + DRAFT_TTL_MS),
+    reviewedAt: iso(sentAt),
+    outboundMessageId: outbound.id,
+    reservationProposal: input.reservationProposal ?? null,
+    reservationRequestId: input.reservationRequestId ?? null,
+    reservationOutcome: input.reservationOutcome ?? null,
+    createdAt: iso(arrived),
+    updatedAt: iso(sentAt),
   };
 }

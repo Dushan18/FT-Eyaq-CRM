@@ -43,8 +43,10 @@ function created(overrides: Partial<ReservationRequest> = {}): ReservationReques
   return {
     id: "c7a3e9f1-4b2d-4e8a-9f60-2d5b8c1e7a93",
     code: "RES-2026-000042",
+    externalReference: null,
     customerId: customer.id,
     commercialItemId: null,
+    conversationId: null,
     sourceChannel: "WHATSAPP",
     reservationAt: null,
     numberOfPeople: null,

@@ -22,6 +22,7 @@ export function makeConfig(overrides: Partial<RestaurantConfig> = {}): Restauran
     latitude: -12.1216,
     longitude: -77.0298,
     whatsappNumber: "+51987000192",
+    ownerWhatsappNumber: "+51912345678",
     email: "reservas@sabormagico.pe",
     website: "https://sabormagico.pe",
     currency: "PEN",

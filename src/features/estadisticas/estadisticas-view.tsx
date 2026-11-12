@@ -176,7 +176,7 @@ export function EstadisticasView() {
           size="lg"
           label="Rechazadas"
           value={metric(requests, () => summary?.rejected ?? 0)}
-          sub={summary ? `${summary.renegotiating} en renegociación` : requests.isError ? requestsFailed : "… en renegociación"}
+          sub={summary ? `${summary.renegotiating} con cambio propuesto` : requests.isError ? requestsFailed : "… con cambio propuesto"}
         />
         <KpiCard
           size="lg"
@@ -188,13 +188,19 @@ export function EstadisticasView() {
               <span title="Aún no hay solicitudes aceptadas ni rechazadas en este periodo">—</span>
             ),
           )}
-          sub="Respuesta media del dueño: sin registro"
+          sub={
+            summary
+              ? `${summary.accepted} aceptadas de ${summary.accepted + summary.rejected} decididas`
+              : requests.isError
+                ? requestsFailed
+                : "… decididas"
+          }
         />
         <KpiCard
           size="lg"
           label="Resueltas por Samanta"
-          value={<span title="El backend aún no integra a Samanta">—</span>}
-          sub="Disponible cuando Samanta esté integrada"
+          value={<span title="El backend aún no expone cuántas conversaciones resolvió Samanta">—</span>}
+          sub="El backend aún no lo registra"
         />
       </div>
 

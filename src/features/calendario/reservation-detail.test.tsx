@@ -412,14 +412,14 @@ describe("Detalle de reserva: origen y roles", () => {
   it("la etiqueta de origen sigue el dato real", async () => {
     mockDetail(makeDetail());
     const first = renderPanel();
-    expect(await screen.findByText("Registro manual")).toBeInTheDocument();
-    expect(screen.queryByText("Aceptada por el dueño")).not.toBeInTheDocument();
+    expect(await screen.findByText("Registrada en el CRM")).toBeInTheDocument();
+    expect(screen.queryByText("Aceptada por el propietario")).not.toBeInTheDocument();
     first.unmount();
     vi.restoreAllMocks();
 
     mockDetail(makeDetail({ reservationRequestId: "0b7f8a52-6c2d-4e1f-9a3b-5d4c3e2f1a00" }));
     renderPanel();
-    expect(await screen.findByText("Desde una solicitud")).toBeInTheDocument();
+    expect(await screen.findByText("Aceptada por el propietario")).toBeInTheDocument();
   });
 
   it("OWNER solo lee: sin cambios de estado, edición, responsable ni observaciones nuevas", async () => {

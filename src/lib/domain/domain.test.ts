@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Message } from "@/lib/api/types";
+import { SAMANTA_USER_ID, type Message } from "@/lib/api/types";
 import { conversationMode, customerInitials, customerName, messageAuthor, messageText, previewPrefix } from "./conversation";
 import { REQUEST_TAB_STATUSES, requestStatusView, requestTimeline } from "./statuses";
 
@@ -12,17 +12,20 @@ describe("línea de tiempo de la solicitud (mockup)", () => {
     expect(requestTimeline("READY_TO_SEND")[0]!.sub).toContain("Datos completos");
   });
 
-  it("esperando al dueño: enviada por su WhatsApp personal, falta su respuesta", () => {
+  it("esperando al propietario: enviada por su WhatsApp personal, falta su respuesta", () => {
     const steps = requestTimeline("WAITING_RESPONSE");
     expect(state(steps)).toEqual(["hecho", "en curso", "pendiente"]);
-    expect(steps[2]!.label).toBe("Respuesta del dueño");
-    expect(steps[2]!.sub).toBe("ACEPTAR o RECHAZAR");
+    expect(steps[1]!.label).toBe("Enviada al propietario");
+    expect(steps[2]!.label).toBe("Respuesta del propietario");
+    expect(steps[2]!.sub).toBe("Aceptar, rechazar o proponer cambio");
   });
 
   it("aceptada, rechazada o cancelada cierran la línea con su desenlace", () => {
     expect(state(requestTimeline("ACCEPTED"))).toEqual(["hecho", "hecho", "hecho"]);
-    expect(requestTimeline("ACCEPTED")[2]!.label).toBe("Aceptada por el dueño");
-    expect(requestTimeline("REJECTED")[2]).toMatchObject({ label: "Rechazada por el dueño", sub: "Samanta propone otra alternativa" });
+    expect(requestTimeline("ACCEPTED")[2]).toMatchObject({ label: "Aceptada", sub: "Reserva en el calendario" });
+    // El backend no propone otra fecha al rechazar: solo informa que no hay reserva.
+    expect(requestTimeline("REJECTED")[2]).toMatchObject({ label: "Rechazada", sub: "No se registró ninguna reserva" });
+    expect(requestTimeline("MODIFICATION_REQUESTED")[2]).toMatchObject({ label: "Cambio propuesto", sub: "Coordina el cambio con el cliente" });
     expect(requestTimeline("CANCELLED")[2]!.label).toBe("Cancelada");
   });
 
@@ -31,9 +34,12 @@ describe("línea de tiempo de la solicitud (mockup)", () => {
   });
 
   it("las etiquetas y pestañas siguen los grupos del mockup", () => {
-    expect(requestStatusView("WAITING_RESPONSE")).toMatchObject({ label: "Esperando al dueño", group: "esperando" });
+    expect(requestStatusView("WAITING_RESPONSE")).toMatchObject({ label: "Esperando al propietario", group: "esperando" });
     expect(requestStatusView("RENEGOTIATING").group).toBe("negociando");
     expect(REQUEST_TAB_STATUSES.esperando).toEqual(["SENT_TO_OWNER", "WAITING_RESPONSE"]);
+    // «Cambio propuesto» no espera al propietario: necesita a una persona del equipo y tiene pestaña propia.
+    expect(requestStatusView("MODIFICATION_REQUESTED")).toMatchObject({ label: "Cambio propuesto", group: "cambio" });
+    expect(REQUEST_TAB_STATUSES.cambio).toEqual(["MODIFICATION_REQUESTED"]);
   });
 });
 
@@ -49,6 +55,8 @@ describe("conversación", () => {
     // Samanta solo si el mensaje salió de un borrador aprobado; un saliente sin autor ya no se supone de Samanta.
     expect(messageAuthor({ id: "m2", direction: "OUTBOUND" })).toBe("operador");
     expect(messageAuthor({ id: "m2", direction: "OUTBOUND" }, new Set(["m2"]))).toBe("samanta");
+    // Respuestas automáticas y textos del backend (p. ej. al propietario) llevan el usuario de sistema de Samanta.
+    expect(messageAuthor({ id: "m3", direction: "OUTBOUND", authorUserId: SAMANTA_USER_ID })).toBe("samanta");
     expect(previewPrefix({ direction: "OUTBOUND", authorUserId: "yo" }, "yo")).toBe("Tú: ");
     expect(previewPrefix({ direction: "OUTBOUND", authorUserId: "otro" }, "yo")).toBe("Equipo: ");
     expect(previewPrefix({ direction: "INBOUND", authorUserId: null }, "yo")).toBe("");

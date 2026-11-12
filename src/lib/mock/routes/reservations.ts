@@ -1,6 +1,5 @@
 /** Rutas simuladas de solicitudes de reserva y reservas (Parte 03). */
-import { TZDate } from "@date-fns/tz";
-import type { CommercialItem, CurrencyCode, ReservationStatus } from "@/lib/api/types";
+import type { CurrencyCode, ReservationStatus, RoleCode } from "@/lib/api/types";
 import {
   RESERVATION_ASSIGNABLE_STATUSES,
   RESERVATION_EDITABLE_STATUSES,
@@ -33,13 +32,26 @@ import {
   type Ctx,
   type Route,
 } from "../http";
+import {
+  NO_CONFIG,
+  REQUEST_NOT_EDITABLE,
+  approveRequest,
+  changeStatus,
+  nextCode,
+  rejectRequest,
+  requireBookableItem,
+  type RequestActor,
+} from "../requests";
 import { iso, uuid, type MockRequest, type MockReservation, type MockStore } from "../store";
-import { author, findCustomer, requestOut, reservationDetailOut, reservationOut } from "../views";
+import { author, findCustomer, requestDetailOut, requestOut, reservationDetailOut, reservationOut } from "../views";
+
+/** Aprobar y rechazar solicitudes (10/11). */
+const APPROVERS: RoleCode[] = ["ADMIN", "OWNER"];
+const REASON_MAX = 1000;
 
 const MAX_PEOPLE = 2_147_483_647;
 const NOT_FUTURE = "La fecha de reserva debe ser válida y futura";
 const PRICE_AND_CURRENCY = "El precio y la moneda deben estar presentes juntos";
-const NO_CONFIG = "Configura el restaurante antes de crear solicitudes o reservas";
 
 function requireConfig(store: MockStore) {
   if (!store.config) fail(409, NO_CONFIG);
@@ -50,23 +62,25 @@ function requireCustomer(store: MockStore, id: string) {
   if (!store.customers.some((c) => c.id === id)) fail(404, "Cliente no encontrado");
 }
 
-/** Elemento elegible para solicitudes y reservas: existe, activo y APPROVED (la categoría no cuenta). */
-function requireBookableItem(store: MockStore, id: string): CommercialItem {
-  const item = store.items.find((i) => i.id === id);
-  if (!item) fail(404, "Elemento comercial no encontrado");
-  if (!item.isActive || item.approvalStatus !== "APPROVED") fail(400, "El elemento comercial debe estar activo y aprobado");
-  return item;
-}
-
 function requireFuture(at: string) {
   if (Date.parse(at) <= Date.now()) fail(400, NOT_FUTURE);
 }
 
-/** Código RES-<año>-<secuencia> o R-<año>-<secuencia>, con el año de la zona del restaurante. */
-function nextCode(store: MockStore, kind: "request" | "reservation") {
-  store.sequences[kind] += 1;
-  const year = new TZDate(Date.now(), store.config?.timeZone ?? "America/Lima").getFullYear();
-  return `${kind === "request" ? "RES" : "R"}-${year}-${String(store.sequences[kind]).padStart(6, "0")}`;
+/** Conversación que quedaría vinculada: existe (404) y es del cliente de la solicitud (400). */
+function requireConversation(store: MockStore, conversationId: string | null | undefined, customerId: string) {
+  if (!conversationId) return;
+  const conv = store.conversations.find((c) => c.id === conversationId);
+  if (!conv) fail(404, "Conversación no encontrada");
+  if (conv.customerId !== customerId) fail(400, "La conversación pertenece a otro cliente");
+}
+
+/** `reason` opcional de cancelar y rechazar: trim, 1–1000. */
+function readReason(check: BodyCheck, body: Record<string, unknown>): string | null {
+  return check.text("reason", body.reason, REASON_MAX) ?? null;
+}
+
+function userActor(ctx: Ctx): RequestActor {
+  return { type: "USER", id: ctx.user!.id };
 }
 
 function getRequest(ctx: Ctx): MockRequest {
@@ -83,12 +97,24 @@ function getReservation(ctx: Ctx): MockReservation {
 
 function readRequestBody(body: Record<string, unknown>, mode: "create" | "update") {
   const check = new BodyCheck();
-  check.only(body, ["customerId", "sourceChannel", "commercialItemId", "reservationAt", "numberOfPeople", "quotedPrice", "currency", "comments", "specialRequirements"]);
+  check.only(body, [
+    "customerId",
+    "sourceChannel",
+    "commercialItemId",
+    "conversationId",
+    "reservationAt",
+    "numberOfPeople",
+    "quotedPrice",
+    "currency",
+    "comments",
+    "specialRequirements",
+  ]);
   const strict = mode === "create" ? { required: true } : { nullable: false };
   const out = {
     customerId: check.uuid("customerId", body.customerId, strict),
     sourceChannel: check.enumOf("sourceChannel", body.sourceChannel, CHANNELS, strict),
     commercialItemId: check.uuid("commercialItemId", body.commercialItemId),
+    conversationId: check.uuid("conversationId", body.conversationId),
     reservationAt: check.instant("reservationAt", body.reservationAt),
     numberOfPeople: check.int("numberOfPeople", body.numberOfPeople, 1, MAX_PEOPLE),
     quotedPrice: check.money("quotedPrice", body.quotedPrice),
@@ -133,11 +159,12 @@ export const reservationRoutes: Route[] = [
     pattern: "/reservation-requests",
     access: READERS,
     handler: (ctx) => {
-      readQuery(ctx, ["page", "limit", "customerId", "dateFrom", "dateTo", "status", "channel", "commercialItemId", "search"]);
+      readQuery(ctx, ["page", "limit", "customerId", "dateFrom", "dateTo", "status", "channel", "commercialItemId", "conversationId", "search"]);
       const { page, limit } = pageParams(ctx, 20);
       const { fromMs, toMs } = dateRange(ctx);
       const customerId = uuidParam(ctx, "customerId");
       const itemId = uuidParam(ctx, "commercialItemId");
+      const conversationId = uuidParam(ctx, "conversationId");
       const status = enumParam(ctx, "status", RESERVATION_REQUEST_STATUSES);
       const channel = enumParam(ctx, "channel", CHANNELS);
       const search = searchParam(ctx);
@@ -149,6 +176,7 @@ export const reservationRoutes: Route[] = [
           if (toMs !== null && at! >= toMs) return false;
           if (customerId && r.customerId !== customerId) return false;
           if (itemId && r.commercialItemId !== itemId) return false;
+          if (conversationId && r.conversationId !== conversationId) return false;
           if (status && r.status !== status) return false;
           if (channel && r.sourceChannel !== channel) return false;
           if (search && !lower(r.code).includes(lower(search)) && !customerMatches(findCustomer(ctx.store, r.customerId), search)) return false;
@@ -168,6 +196,7 @@ export const reservationRoutes: Route[] = [
       const config = requireConfig(ctx.store);
       requireCustomer(ctx.store, input.customerId!);
       if (input.commercialItemId) requireBookableItem(ctx.store, input.commercialItemId);
+      requireConversation(ctx.store, input.conversationId, input.customerId!);
       if (input.reservationAt) requireFuture(input.reservationAt);
       const quotedPrice = input.quotedPrice ?? null;
       let currency: CurrencyCode | null;
@@ -175,11 +204,14 @@ export const reservationRoutes: Route[] = [
       else currency = input.currency;
       if ((quotedPrice === null) !== (currency === null)) fail(400, PRICE_AND_CURRENCY);
       const now = iso(Date.now());
+      // Las creadas a mano no se envían al propietario: solo las de Samanta y las de la web.
       const request: MockRequest = {
         id: uuid(),
         code: nextCode(ctx.store, "request"),
+        externalReference: null,
         customerId: input.customerId!,
         commercialItemId: input.commercialItemId ?? null,
+        conversationId: input.conversationId ?? null,
         sourceChannel: input.sourceChannel!,
         reservationAt: input.reservationAt ?? null,
         numberOfPeople: input.numberOfPeople ?? null,
@@ -190,6 +222,11 @@ export const reservationRoutes: Route[] = [
         status: "INCOMPLETE_DATA",
         createdAt: now,
         updatedAt: now,
+        // El alta no deja entrada en el historial.
+        statusHistory: [],
+        ownerMessageId: null,
+        customerNoticeMessageId: null,
+        customerNoticeError: null,
       };
       request.status = requestStatus(request);
       ctx.store.requests.push(request);
@@ -200,7 +237,7 @@ export const reservationRoutes: Route[] = [
     method: "GET",
     pattern: "/reservation-requests/:id",
     access: READERS,
-    handler: (ctx) => json(200, requestOut(ctx.store, getRequest(ctx))),
+    handler: (ctx) => json(200, requestDetailOut(ctx.store, getRequest(ctx))),
   },
   {
     method: "PATCH",
@@ -210,10 +247,14 @@ export const reservationRoutes: Route[] = [
       const input = readRequestBody(ctx.body, "update");
       requireSomeField(ctx.body, "Proporciona al menos un campo para actualizar");
       const r = getRequest(ctx);
-      if (!RESERVATION_REQUEST_EDITABLE_STATUSES.includes(r.status)) fail(409, "La solicitud no admite modificaciones en su estado actual");
+      if (!RESERVATION_REQUEST_EDITABLE_STATUSES.includes(r.status)) fail(409, REQUEST_NOT_EDITABLE);
       if (input.customerId) requireCustomer(ctx.store, input.customerId);
       // Reenviar el elemento actual es válido aunque ya no esté activo o aprobado.
       if (input.commercialItemId && input.commercialItemId !== r.commercialItemId) requireBookableItem(ctx.store, input.commercialItemId);
+      // La conversación que quedaría vinculada (la enviada o la actual, si cambia el cliente) es de ese cliente.
+      const customerId = input.customerId ?? r.customerId;
+      const conversationId = input.conversationId !== undefined ? input.conversationId : r.conversationId;
+      if (input.conversationId !== undefined || customerId !== r.customerId) requireConversation(ctx.store, conversationId, customerId);
       // Si llega una fecha, tiene que ser futura aunque no cambie.
       if (input.reservationAt) requireFuture(input.reservationAt);
 
@@ -230,14 +271,17 @@ export const reservationRoutes: Route[] = [
       if (input.customerId) r.customerId = input.customerId;
       if (input.sourceChannel) r.sourceChannel = input.sourceChannel;
       if (input.commercialItemId !== undefined) r.commercialItemId = input.commercialItemId;
+      r.conversationId = conversationId;
       if (input.reservationAt !== undefined) r.reservationAt = input.reservationAt;
       if (input.numberOfPeople !== undefined) r.numberOfPeople = input.numberOfPeople;
       if (input.comments !== undefined) r.comments = input.comments;
       if (input.specialRequirements !== undefined) r.specialRequirements = input.specialRequirements;
       r.quotedPrice = quotedPrice;
       r.currency = currency;
-      r.status = requestStatus(r);
-      r.updatedAt = iso(Date.now());
+      const now = Date.now();
+      // INCOMPLETE_DATA ⇄ READY_TO_SEND deja una entrada USER (sin motivo); si no cambia, ninguna.
+      changeStatus(r, requestStatus(r), userActor(ctx), null, now);
+      r.updatedAt = iso(now);
       return json(200, requestOut(ctx.store, r));
     },
   },
@@ -247,14 +291,41 @@ export const reservationRoutes: Route[] = [
     access: WRITERS,
     handler: (ctx) => {
       const check = new BodyCheck();
-      check.only(ctx.body, ["status"]);
+      check.only(ctx.body, ["status", "reason"]);
       check.enumOf("status", ctx.body.status, ["CANCELLED"] as const, { required: true });
+      const reason = readReason(check, ctx.body);
       check.done();
       const r = getRequest(ctx);
+      // Idempotente: sin cambios ni entrada nueva, aunque el motivo sea otro.
       if (r.status === "CANCELLED") return json(200, requestOut(ctx.store, r));
-      if (!RESERVATION_REQUEST_EDITABLE_STATUSES.includes(r.status)) fail(409, "La solicitud no admite modificaciones en su estado actual");
-      r.status = "CANCELLED";
-      r.updatedAt = iso(Date.now());
+      if (!RESERVATION_REQUEST_EDITABLE_STATUSES.includes(r.status)) fail(409, REQUEST_NOT_EDITABLE);
+      changeStatus(r, "CANCELLED", userActor(ctx), reason, Date.now());
+      return json(200, requestOut(ctx.store, r));
+    },
+  },
+  {
+    method: "POST",
+    pattern: "/reservation-requests/:id/approve",
+    access: APPROVERS,
+    handler: (ctx) => {
+      // Sin body: lo que llegue se ignora.
+      const r = getRequest(ctx);
+      const { reservation } = approveRequest(ctx.store, r, userActor(ctx), Date.now());
+      // No avisa al cliente ni al dueño: lo hace una persona por la Bandeja.
+      return json(200, { request: requestOut(ctx.store, r), reservation: reservationOut(ctx.store, reservation) });
+    },
+  },
+  {
+    method: "POST",
+    pattern: "/reservation-requests/:id/reject",
+    access: APPROVERS,
+    handler: (ctx) => {
+      const check = new BodyCheck();
+      check.only(ctx.body, ["reason"]);
+      const reason = readReason(check, ctx.body);
+      check.done();
+      const r = getRequest(ctx);
+      rejectRequest(ctx.store, r, userActor(ctx), reason, Date.now());
       return json(200, requestOut(ctx.store, r));
     },
   },

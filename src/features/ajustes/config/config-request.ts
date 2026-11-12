@@ -2,6 +2,10 @@
  * Armado del cuerpo de PUT /restaurant-config. El PUT es un REEMPLAZO COMPLETO: cada pestaña envía
  * la configuración vigente con sus cambios aplicados. Nunca se reenvía el GET tal cual: id, createdAt,
  * updatedAt y approvalResponsible provocan 400 ("property X should not exist").
+ *
+ * Dos campos opcionales se comportan distinto al omitirlos: approvalResponsibleId omitido se BORRA (como
+ * los demás opcionales) y ownerWhatsappNumber omitido se CONSERVA. Para no depender de esa diferencia,
+ * toPutRequest envía siempre los dos con el valor vigente.
  */
 import {
   DAYS_OF_WEEK,
@@ -47,6 +51,7 @@ export function toPutRequest(config: RestaurantConfig): PutRestaurantConfigReque
     latitude: hasCoordinates ? normalizeCoordinate(latitude) : null,
     longitude: hasCoordinates ? normalizeCoordinate(longitude) : null,
     whatsappNumber: config.whatsappNumber,
+    ownerWhatsappNumber: config.ownerWhatsappNumber,
     email: config.email,
     website: config.website,
     currency: config.currency,
@@ -54,6 +59,7 @@ export function toPutRequest(config: RestaurantConfig): PutRestaurantConfigReque
     reservationPolicy: config.reservationPolicy,
     cancellationPolicy: config.cancellationPolicy,
     responseTimeoutMinutes: config.responseTimeoutMinutes,
+    // Omitirlo lo borraría: se reenvía siempre el responsable vigente.
     approvalResponsibleId: config.approvalResponsibleId,
     languages: [...config.languages],
     schedules: DAYS_OF_WEEK.map((day) => scheduleToInput(day, config.schedules.find((s) => s.dayOfWeek === day))),

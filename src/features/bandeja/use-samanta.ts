@@ -18,7 +18,7 @@ import { qk } from "@/lib/api/query-keys";
 import type {
   Conversation,
   Message,
-  SamantaDraft,
+  SamantaDraft, SamantaReservationOutcome,
   SamantaDraftListResponse,
   SamantaIntent,
 } from "@/lib/api/types";
@@ -43,7 +43,7 @@ export function useAssistantDrafts(
 
 function hasPendingDraft(list: SamantaDraftListResponse | undefined): boolean {
   return Boolean(
-    list?.data.some((d) => d.status === "GENERATING" || d.status === "READY"),
+    list?.data.some((d) => d.status === "SCHEDULED" || d.status === "GENERATING" || d.status === "READY"),
   );
 }
 
@@ -91,6 +91,31 @@ export function samantaMessageIds(
 }
 
 /** Borrador que se muestra en el panel: el más reciente, salvo que ya se haya aprobado o descartado. */
+/** Texto de `reservationOutcome` bajo un mensaje de Samanta (solo respuestas automáticas, desde el 10/11). */
+export const RESERVATION_OUTCOME_LABEL: Record<SamantaReservationOutcome, string> = {
+  PROPOSED: "Resumen enviado",
+  CREATED: "Solicitud registrada",
+  ALREADY_REGISTERED: "Solicitud ya registrada",
+  ALREADY_DECIDED: "Repitió la decisión del propietario",
+  MISSING_DATA: "Pidió los datos que faltan",
+  INVALID_DATE: "Fecha no válida",
+  PAST_DATE: "Fecha pasada",
+  INVALID_PEOPLE: "Personas no válidas",
+  UNKNOWN_SERVICE: "Servicio no disponible",
+  NO_PROPOSAL: "Sin resumen previo: pasó a una persona",
+};
+
+/** Mensaje saliente de Samanta → qué hizo su acción de reserva (de los borradores APPROVED con resultado). */
+export function samantaReservationOutcomes(
+  drafts: readonly SamantaDraft[] | undefined,
+): ReadonlyMap<string, SamantaReservationOutcome> {
+  const map = new Map<string, SamantaReservationOutcome>();
+  for (const d of drafts ?? []) {
+    if (d.status === "APPROVED" && d.outboundMessageId && d.reservationOutcome) map.set(d.outboundMessageId, d.reservationOutcome);
+  }
+  return map;
+}
+
 export function activeDraft(
   drafts: readonly SamantaDraft[] | undefined,
 ): SamantaDraft | null {

@@ -39,6 +39,8 @@ export type Action =
   // Solicitudes: crear y editar (POST, PATCH /reservation-requests) y cancelar (PATCH …/status)
   | "request.edit"
   | "request.cancel"
+  // Solicitudes: aprobar (crea la reserva) y rechazar (POST /reservation-requests/:id/approve|reject)
+  | "request.approve"
   // Calendario: crear (POST /reservations, solo ADMIN); editar, responsable, notas y reprogramar; estado
   | "reservation.create"
   | "reservation.edit"
@@ -80,6 +82,7 @@ export const ACTION_ROLES: Record<Action, RoleCode[]> = {
   "draft.review": WRITE_CORE,
   "request.edit": WRITE_CORE,
   "request.cancel": WRITE_CORE,
+  "request.approve": ["ADMIN", "OWNER"],
   "reservation.create": ["ADMIN"],
   "reservation.edit": WRITE_CORE,
   "reservation.status": WRITE_CORE,

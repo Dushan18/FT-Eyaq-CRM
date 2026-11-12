@@ -41,6 +41,16 @@ export const SCHEDULE_MESSAGES = {
   week: "Debe haber un horario para cada día de la semana.",
 } as const;
 
+/**
+ * Error si el WhatsApp del propietario es el del negocio (el backend responde 400
+ * «ownerWhatsappNumber debe ser distinto de whatsappNumber»: el negocio no puede escribirse a sí mismo).
+ */
+export function ownerNumberError(owner: string | null, business: string): string | undefined {
+  return owner !== null && owner === compactPhone(business)
+    ? "Debe ser distinto del WhatsApp del negocio: es el número personal del propietario."
+    : undefined;
+}
+
 /** Quita separadores visuales: "+51 987 000 192" → "+51987000192". */
 export function compactPhone(value: string): string {
   return value.replace(/[\s().-]/g, "");
@@ -172,6 +182,19 @@ export const configFieldSchemas = {
     .min(1, EMAIL_REQUIRED)
     .max(CONFIG_LIMITS.email, `Máximo ${CONFIG_LIMITS.email} caracteres.`)
     .pipe(z.email("Ingresa un correo válido (por ejemplo, reservas@mirestaurante.pe).")),
+  /** "" o null → null (sin número). Omitido en el PUT, el backend conserva el guardado. */
+  ownerWhatsappNumber: z
+    .string()
+    .nullable()
+    .transform((value) => (value === null ? null : compactPhone(value)))
+    .transform((value) => (value === "" ? null : value))
+    .pipe(
+      z
+        .string()
+        .regex(E164_PATTERN, "Usa el formato internacional: + código de país y número (por ejemplo, +51912345678).")
+        .nullable(),
+    )
+    .optional(),
   website: optionalUrl,
   currency: z.enum(CURRENCY_CODES, { error: "Elige PEN o USD." }),
   timeZone: z
@@ -261,6 +284,7 @@ const FIELD_TABS: Record<ConfigField, SettingsTab> = {
   latitude: "empresa",
   longitude: "empresa",
   whatsappNumber: "empresa",
+  ownerWhatsappNumber: "empresa",
   email: "empresa",
   website: "empresa",
   currency: "empresa",
@@ -270,7 +294,7 @@ const FIELD_TABS: Record<ConfigField, SettingsTab> = {
   reservationPolicy: "politicas",
   cancellationPolicy: "politicas",
   responseTimeoutMinutes: "samanta",
-  approvalResponsibleId: "samanta",
+  approvalResponsibleId: "empresa",
 };
 
 const CONFIG_TAB_ORDER: readonly SettingsTab[] = ["empresa", "horarios", "politicas", "samanta"];
@@ -283,7 +307,7 @@ const CONFIG_TAB_ORDER: readonly SettingsTab[] = ["empresa", "horarios", "politi
 export function backendMessageTabs(messages: readonly string[]): SettingsTab[] {
   const found = new Set<SettingsTab>();
   for (const message of messages) {
-    if (/responsable de aprobaci[oó]n/i.test(message)) found.add("samanta");
+    if (/responsable de aprobaci[oó]n/i.test(message)) found.add("empresa");
     if (/horarios/i.test(message)) found.add("horarios");
     for (const [field, tab] of Object.entries(FIELD_TABS) as Array<[ConfigField, SettingsTab]>) {
       if (new RegExp(`\\b${field}\\b`).test(message)) found.add(tab);

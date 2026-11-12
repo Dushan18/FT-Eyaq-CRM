@@ -1,4 +1,5 @@
 import type { CommercialItemSummary, ContactChannel, Conversation, CustomerSummary, Message, OutboundMessageStatus } from "@/lib/api/types";
+import { SAMANTA_USER_ID } from "@/lib/api/types";
 import { initials, personName } from "@/lib/format/text";
 
 /** Respaldo de los canales cuyos clientes llegan sin teléfono ni correo (identidades del proveedor). */
@@ -67,8 +68,13 @@ export type MessageAuthor = "cliente" | "samanta" | "operador";
  * en bk-crm todo saliente tiene autor (quien lo envió o quien aprobó el borrador), así que la única forma
  * de reconocer a Samanta es cruzar el id con `outboundMessageId` de los borradores APPROVED (`samantaIds`).
  */
-export function messageAuthor(m: Pick<Message, "id" | "direction">, samantaIds?: ReadonlySet<string>): MessageAuthor {
+export function messageAuthor(
+  m: Pick<Message, "id" | "direction"> & Partial<Pick<Message, "authorUserId">>,
+  samantaIds?: ReadonlySet<string>,
+): MessageAuthor {
   if (m.direction === "INBOUND") return "cliente";
+  // Respuestas automáticas de Samanta y textos del backend (p. ej. al propietario) llevan SAMANTA_USER_ID.
+  if (m.authorUserId === SAMANTA_USER_ID) return "samanta";
   return samantaIds?.has(m.id) ? "samanta" : "operador";
 }
 

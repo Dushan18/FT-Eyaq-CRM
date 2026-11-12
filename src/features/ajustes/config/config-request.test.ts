@@ -3,7 +3,7 @@ import type { PutRestaurantConfigRequest, RestaurantScheduleInput } from "@/lib/
 import { makeConfig } from "./config-fixtures";
 import { closedWeek, normalizeCoordinate, replaceSchedules, scheduleToInput, toPutRequest } from "./config-request";
 
-/** Las 17 propiedades que declara el DTO del PUT (cualquier otra es 400). */
+/** Las 18 propiedades que declara el DTO del PUT (cualquier otra es 400). */
 const PUT_KEYS: Array<keyof PutRestaurantConfigRequest> = [
   "address",
   "approvalResponsibleId",
@@ -16,6 +16,7 @@ const PUT_KEYS: Array<keyof PutRestaurantConfigRequest> = [
   "latitude",
   "logoUrl",
   "longitude",
+  "ownerWhatsappNumber",
   "reservationPolicy",
   "responseTimeoutMinutes",
   "schedules",
@@ -25,6 +26,11 @@ const PUT_KEYS: Array<keyof PutRestaurantConfigRequest> = [
 ];
 
 describe("toPutRequest", () => {
+  it("reenvía siempre el responsable (omitirlo lo borraría) y el WhatsApp del propietario vigentes", () => {
+    expect(toPutRequest(makeConfig())).toMatchObject({ approvalResponsibleId: "6f1c2a52-8a1e-4c55-9d0b-2b8f0e7d4a11", ownerWhatsappNumber: "+51912345678" });
+    expect(toPutRequest(makeConfig({ ownerWhatsappNumber: null }))).toHaveProperty("ownerWhatsappNumber", null);
+  });
+
   it("envía exactamente las propiedades del PUT: sin id, createdAt, updatedAt ni approvalResponsible", () => {
     const request = toPutRequest(makeConfig());
     expect(Object.keys(request).sort()).toEqual(PUT_KEYS);

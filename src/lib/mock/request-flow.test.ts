@@ -11,8 +11,10 @@ import type {
   Paginated,
   Reservation,
   ReservationRequest,
+  ReservationRequestDetail,
   SamantaDraftListResponse,
 } from "@/lib/api/types";
+import { SAMANTA_USER_ID } from "@/lib/api/types";
 import { buildSeed } from "./seed";
 import { handleMockRequest, mockStore } from "./server";
 import { runSimulator, SimulatorError, simulatorSnapshot } from "./simulator";
@@ -143,12 +145,25 @@ describe("flujo central de solicitudes", () => {
       { token: admin, query: { customerId } },
     );
     expect(requests.body.data).toHaveLength(1);
+    // Samanta la registra READY_TO_SEND, vinculada a la conversación, y el backend la envía al propietario.
     expect(requests.body.data[0]).toMatchObject({
       status: "WAITING_RESPONSE",
       numberOfPeople: 4,
-      quotedPrice: service.precio,
+      commercialItemId: service.id,
+      conversationId,
+      externalReference: null,
+      specialRequirements: "Terraza",
+      comments:
+        "CRM: registrada por Samanta con la confirmación del cliente en la conversación.",
       sourceChannel: "WHATSAPP",
     });
+    // El cliente pasa a REQUESTED_RESERVATION.
+    const customer = await api<{ status: string }>(
+      "GET",
+      `/customers/${customerId}`,
+      { token: admin },
+    );
+    expect(customer.body.status).toBe("REQUESTED_RESERVATION");
 
     // Solo las aceptadas entran al calendario: todavía no hay reserva.
     const reservations = await api<Paginated<Reservation>>(
@@ -158,17 +173,15 @@ describe("flujo central de solicitudes", () => {
     );
     expect(reservations.body.pagination.total).toBe(0);
 
-    // Como en bk-crm, el mensaje de Samanta tiene autor (quien aprobó el borrador; aquí, el ADMIN porque la
-    // conversación está libre) y sale de un borrador APPROVED que apunta a él.
-    const adminId = (
-      await api<{ id: string }>("GET", "/auth/me", { token: admin })
-    ).body.id;
+    // Samanta automática: el mensaje lo firma SAMANTA_USER_ID y sale de un borrador AUTO APPROVED (CREATED).
+    // El resumen anterior (PROPOSED) queda con la solicitud creada.
     const last = (await messages(admin, conversationId))[0]!;
     expect(last).toMatchObject({
       direction: "OUTBOUND",
-      authorUserId: adminId,
+      authorUserId: SAMANTA_USER_ID,
     });
-    expect(last.content).toContain("envié tu solicitud");
+    expect(last.content).toContain(`registré tu solicitud de reserva ${created.code}`);
+    expect(last.content).toContain("pendiente de aprobación");
     const drafts = await api<SamantaDraftListResponse>(
       "GET",
       `/conversations/${conversationId}/assistant-drafts`,
@@ -176,10 +189,34 @@ describe("flujo central de solicitudes", () => {
     );
     expect(drafts.body.data[0]).toMatchObject({
       status: "APPROVED",
+      mode: "AUTO",
       outboundMessageId: last.id,
-      reviewedById: adminId,
+      reviewedById: SAMANTA_USER_ID,
       content: last.content,
+      reservationOutcome: "CREATED",
     });
+    expect(
+      drafts.body.data.find((d) => d.reservationOutcome === "PROPOSED"),
+    ).toMatchObject({
+      reservationRequestId: created.requestId,
+      reservationProposal: { people: 4, commercialItemId: service.id },
+    });
+
+    // Historial: dos cambios SYSTEM del envío al propietario.
+    const detail = await api<ReservationRequestDetail>(
+      "GET",
+      `/reservation-requests/${created.requestId}`,
+      { token: admin },
+    );
+    expect(
+      detail.body.statusHistory.map((h) => [h.previousStatus, h.newStatus, h.actorType, h.reason]),
+    ).toEqual([
+      ["READY_TO_SEND", "SENT_TO_OWNER", "SYSTEM", "Enviada al WhatsApp del propietario para su aprobación."],
+      ["SENT_TO_OWNER", "WAITING_RESPONSE", "SYSTEM", "WhatsApp aceptó el mensaje al propietario (SENT)."],
+    ]);
+    expect(detail.body.statusHistory.every((h) => h.actor === null && h.actorId === null)).toBe(true);
+    expect(detail.body.ownerMessage).toMatchObject({ status: "SENT", errorCode: null });
+    expect(detail.body.reservation).toBeNull();
   });
 
   it("4–5: si el dueño responde ACEPTAR, la reserva entra al calendario de ese día", async () => {
@@ -238,23 +275,132 @@ describe("flujo central de solicitudes", () => {
       reservationAt: new Date(fecha).toISOString(),
     });
 
-    const request = await api<ReservationRequest>(
+    const request = await api<ReservationRequestDetail>(
       "GET",
       `/reservation-requests/${requestId}`,
       { token: admin },
     );
     expect(request.body.status).toBe("ACCEPTED");
-    expect((await messages(admin, conversationId))[0]?.content).toContain(
-      "¡Confirmado!",
-    );
+    // Entrada OWNER con el responsable de aprobación como actor.
+    const config = mockStore().config!;
+    const ownerEntry = request.body.statusHistory.at(-1)!;
+    expect(ownerEntry).toMatchObject({
+      previousStatus: "WAITING_RESPONSE",
+      newStatus: "ACCEPTED",
+      actorType: "OWNER",
+      actorId: config.approvalResponsibleId,
+      actor: { id: config.approvalResponsibleId, firstName: "Ricardo", lastName: "Mora" },
+    });
+    expect(request.body.reservation).toMatchObject({ id: reservation!.id, code: answer.reservationCode, status: "CONFIRMED" });
+    // M9.3: el cliente recibe el aviso en la conversación de Samanta (ventana abierta: texto, sin plantilla).
+    const last = (await messages(admin, conversationId))[0]!;
+    expect(last).toMatchObject({ direction: "OUTBOUND", authorUserId: SAMANTA_USER_ID });
+    expect(last.content).toContain("¡buenas noticias!");
+    expect(last.content).toContain(answer.reservationCode);
+    expect(request.body.customerNoticeMessage).toMatchObject({ id: last.id, conversationId, channel: "WHATSAPP", templateName: null });
+    expect(request.body.customerNoticeError).toBeNull();
 
-    // El dueño no puede responder dos veces.
-    expect(() =>
+    // La conversación del propietario tiene su «Aceptar» y la respuesta del backend.
+    const ownerConv = mockStore().conversations.find(
+      (c) => mockStore().customers.find((x) => x.id === c.customerId)?.phone === config.ownerWhatsappNumber,
+    )!;
+    expect(ownerConv).toMatchObject({ isAssistantPaused: true, assistantPauseReason: "MANUAL" });
+    const ownerMessages = await messages(admin, ownerConv.id);
+    expect(ownerMessages[0]?.content).toBe(
+      `Listo: la solicitud ${request.body.code} quedó ACEPTADA y la reserva ${answer.reservationCode} ya está en el calendario. Le avisamos al cliente por WhatsApp.`,
+    );
+    expect(ownerMessages[1]).toMatchObject({ direction: "INBOUND", content: "Aceptar" });
+
+    // Una segunda respuesta del dueño no cambia nada (ALREADY_RESOLVED) y no crea otra reserva.
+    expect(
       runSimulator({ accion: "dueno", requestId, decision: "RECHAZAR" }),
+    ).toMatchObject({ outcome: "ALREADY_RESOLVED", status: "ACCEPTED" });
+    expect(mockStore().reservations.filter((r) => r.reservationRequestId === requestId)).toHaveLength(1);
+
+    // Un «sí» tardío: Samanta repite la decisión (ALREADY_DECIDED).
+    expect(runSimulator({ accion: "cliente_confirma", requestId })).toMatchObject({ outcome: "ALREADY_DECIDED" });
+    expect((await messages(admin, conversationId))[0]?.content).toContain("ya fue aprobada por el restaurante");
+
+    // Sin enviar al propietario no hay respuesta que simular.
+    const other = runSimulator({
+      accion: "solicitud",
+      conversationId: newConversation("Sin Envío"),
+      fecha,
+      personas: 2,
+      enviarAlDueno: false,
+    }) as { requestId: string; status: string };
+    expect(other.status).toBe("READY_TO_SEND");
+    expect(() =>
+      runSimulator({ accion: "dueno", requestId: other.requestId, decision: "ACEPTAR" }),
     ).toThrow(SimulatorError);
   });
 
-  it("6: si el dueño responde RECHAZAR, no hay reserva y Samanta propone otra fecha u hora", async () => {
+  it("propietario: proponer cambio, propuesta en comments y conversación del cliente en SAMANTA_HANDOFF", async () => {
+    const conversationId = newConversation("Pablo Cambio");
+    const { requestId } = runSimulator({
+      accion: "solicitud",
+      conversationId,
+      fecha: futureAt(6, 20),
+      personas: 3,
+    }) as { requestId: string };
+    const answer = runSimulator({
+      accion: "dueno",
+      requestId,
+      decision: "PROPONER CAMBIO",
+      propuesta: "Mejor a las 21:30",
+    }) as { status: string; outcome: string; propuesta: string };
+    expect(answer).toMatchObject({ status: "MODIFICATION_REQUESTED", outcome: "MODIFICATION_REQUESTED", propuesta: "DETAILS_ADDED" });
+
+    const detail = await api<ReservationRequestDetail>(
+      "GET",
+      `/reservation-requests/${requestId}`,
+      { token: admin },
+    );
+    expect(detail.body.statusHistory.at(-1)).toMatchObject({
+      newStatus: "MODIFICATION_REQUESTED",
+      actorType: "OWNER",
+      reason: "El propietario propuso un cambio por WhatsApp.",
+    });
+    expect(detail.body.comments).toMatch(/\nCRM: propuesta del propietario \(\d{2}\/\d{2},? \d{2}:\d{2}\): Mejor a las 21:30$/);
+    expect(detail.body.reservation).toBeNull();
+    expect(detail.body.customerNoticeMessage?.status).toBe("DELIVERED");
+    const conversation = await api<Conversation>("GET", `/conversations/${conversationId}`, { token: admin });
+    expect(conversation.body).toMatchObject({ isAssistantPaused: true, assistantPauseReason: "SAMANTA_HANDOFF" });
+    // No se puede editar, cancelar ni aprobar.
+    expect((await api("POST", `/reservation-requests/${requestId}/approve`, { token: admin })).status).toBe(409);
+  });
+
+  it("propietario: la plantilla falla, vuelve a READY_TO_SEND y no se reenvía", async () => {
+    const conversationId = newConversation("Fallo Envío");
+    const { requestId } = runSimulator({
+      accion: "solicitud",
+      conversationId,
+      fecha: futureAt(6, 13),
+      personas: 2,
+      enviarAlDueno: false,
+    }) as { requestId: string };
+    expect(runSimulator({ accion: "enviar_dueno", requestId, aceptado: false })).toMatchObject({ status: "SENT_TO_OWNER" });
+    // SENT_TO_OWNER no admite PATCH ni cancelar.
+    expect(
+      (await api("PATCH", `/reservation-requests/${requestId}/status`, { token: admin, body: { status: "CANCELLED" } })).body,
+    ).toMatchObject({ statusCode: 409, message: "La solicitud no admite modificaciones en su estado actual" });
+    expect(runSimulator({ accion: "fallo_dueno", requestId })).toMatchObject({ status: "READY_TO_SEND" });
+    const detail = await api<ReservationRequestDetail>(
+      "GET",
+      `/reservation-requests/${requestId}`,
+      { token: admin },
+    );
+    expect(detail.body.ownerMessage).toMatchObject({ status: "FAILED", errorCode: "WHATSAPP_SEND_REJECTED" });
+    expect(detail.body.statusHistory.at(-1)).toMatchObject({
+      previousStatus: "SENT_TO_OWNER",
+      newStatus: "READY_TO_SEND",
+      actorType: "SYSTEM",
+      reason: "No se pudo enviar al propietario (WHATSAPP_SEND_REJECTED). No se reenvía: apruébala o recházala a mano.",
+    });
+    expect(() => runSimulator({ accion: "enviar_dueno", requestId })).toThrow(/no se reenvía/);
+  });
+
+  it("6: si el dueño responde RECHAZAR, no hay reserva y se avisa al cliente", async () => {
     const conversationId = newConversation("Rita Rechazo");
     const { requestId } = runSimulator({
       accion: "solicitud",
@@ -278,8 +424,50 @@ describe("flujo central de solicitudes", () => {
     );
     expect(reservations.body.pagination.total).toBe(0);
     expect((await messages(admin, conversationId))[0]?.content).toContain(
-      "¿Te propongo otra fecha u hora?",
+      "no pudo aprobar tu solicitud de reserva",
     );
+    const detail = await api<ReservationRequestDetail>(
+      "GET",
+      `/reservation-requests/${requestId}`,
+      { token: admin },
+    );
+    expect(detail.body.statusHistory.at(-1)).toMatchObject({
+      newStatus: "REJECTED",
+      actorType: "OWNER",
+      reason: "Rechazada por el propietario por WhatsApp.",
+    });
+  });
+
+  it("aviso al cliente: si una persona atiende la conversación, no se avisa (PERSON_ATTENDING) y queda la nota CRM", async () => {
+    const conversationId = newConversation("Persona Atiende");
+    const { requestId } = runSimulator({
+      accion: "solicitud",
+      conversationId,
+      fecha: futureAt(5, 20),
+      personas: 2,
+    }) as { requestId: string };
+    const paused = await api<Conversation>("PATCH", `/conversations/${conversationId}/assistant`, {
+      token: admin,
+      body: { paused: true },
+    });
+    expect(paused.body).toMatchObject({ isAssistantPaused: true, assistantPauseReason: "MANUAL" });
+    expect(paused.body.assistantPausedAt).not.toBeNull();
+    const answer = runSimulator({ accion: "dueno", requestId, decision: "ACEPTAR" }) as { avisoAlCliente: unknown };
+    expect(answer.avisoAlCliente).toEqual({ error: "PERSON_ATTENDING" });
+    const detail = await api<ReservationRequestDetail>(
+      "GET",
+      `/reservation-requests/${requestId}`,
+      { token: admin },
+    );
+    expect(detail.body).toMatchObject({ status: "ACCEPTED", customerNoticeMessage: null, customerNoticeError: "PERSON_ATTENDING" });
+    expect(detail.body.comments).toContain(
+      "\nCRM: no se avisó al cliente la decisión del propietario (aceptada): una persona del equipo atiende su conversación.",
+    );
+    const resumed = await api<Conversation>("PATCH", `/conversations/${conversationId}/assistant`, {
+      token: admin,
+      body: { paused: false },
+    });
+    expect(resumed.body).toMatchObject({ isAssistantPaused: false, assistantPauseReason: null, assistantPausedAt: null });
   });
 
   it("2: Samanta solo ofrece servicios activos y aprobados", () => {
@@ -339,6 +527,7 @@ describe("flujo central de solicitudes", () => {
       { token: admin },
     );
     expect(conversation.body.isAssistantPaused).toBe(true);
+    expect(conversation.body.assistantPauseReason).toBe("SAMANTA_HANDOFF");
     const requests = await api<Paginated<ReservationRequest>>(
       "GET",
       "/reservation-requests",

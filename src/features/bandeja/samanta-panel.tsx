@@ -97,7 +97,7 @@ export function SamantaPanel({
   let body: React.ReactNode = null;
   if (offInServer && !draft) {
     body = <p className="m-0 text-[12.5px] text-muted">{generateBlock}</p>;
-  } else if (draft?.status === "GENERATING") {
+  } else if (draft?.status === "GENERATING" || draft?.status === "SCHEDULED") {
     body = (
       <p
         className="m-0 flex items-center gap-2 text-[12.5px] text-muted"

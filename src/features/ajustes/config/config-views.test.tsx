@@ -134,7 +134,7 @@ describe("Políticas", () => {
     const alert = await screen.findByText("No se pudieron guardar los cambios.");
     const notice = alert.parentElement as HTMLElement;
     expect(within(notice).getByText("El responsable de aprobación debe estar activo")).toBeInTheDocument();
-    expect(within(notice).getByRole("link", { name: "Samanta" })).toHaveAttribute("href", "/ajustes/samanta");
+    expect(within(notice).getByRole("link", { name: "Empresa" })).toHaveAttribute("href", "/ajustes/empresa");
     expect(buttons().save).toBeEnabled();
   });
 
@@ -191,6 +191,9 @@ describe("Horarios", () => {
   });
 });
 
+/** Empresa tiene dos formularios (datos y aprobación del propietario): el primer «Guardar cambios» es el de los datos. */
+const empresaSave = () => screen.getAllByRole("button", { name: "Guardar cambios" })[0]!;
+
 describe("Empresa", () => {
   it("normaliza lo que el backend rechazaría: WhatsApp con espacios y descripción vacía", async () => {
     const config = makeConfig();
@@ -198,7 +201,7 @@ describe("Empresa", () => {
     renderWithQuery(<EmpresaView />);
     fireEvent.change(await screen.findByLabelText("WhatsApp del negocio"), { target: { value: "+51 987 000 999" } });
     fireEvent.change(screen.getByLabelText("Descripción"), { target: { value: "" } });
-    fireEvent.click(buttons().save);
+    fireEvent.click(empresaSave());
     await screen.findByText("Cambios guardados");
     expect(put).toHaveBeenCalledExactlyOnceWith({ ...toPutRequest(config), whatsappNumber: "+51987000999", description: null });
   });
@@ -209,7 +212,7 @@ describe("Empresa", () => {
     fireEvent.change(await screen.findByLabelText("Página web"), { target: { value: "http://localhost:3000" } });
     fireEvent.click(screen.getByRole("checkbox", { name: "Español" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Inglés" }));
-    fireEvent.click(buttons().save);
+    fireEvent.click(empresaSave());
     expect(await screen.findByText(/localhost no es válido/)).toBeInTheDocument();
     expect(screen.getByText("Elige al menos un idioma.")).toBeInTheDocument();
     expect(screen.getByLabelText("Página web")).toHaveAttribute("aria-invalid", "true");
@@ -285,21 +288,29 @@ describe("Empresa", () => {
   });
 });
 
-describe("Samanta", () => {
-  const owners = [
-    makeUser({ id: OWNER_ID, firstName: "Ricardo", lastName: "Mora", email: "ricardo@sabormagico.pe" }),
-    makeUser({ id: OWNER_2_ID, firstName: "Ana", lastName: "Díaz", email: "ana@sabormagico.pe" }),
-    makeUser({ id: "c9a1b2c3-d4e5-4f60-8a7b-9c0d1e2f3a4b", firstName: "Beto", isActive: false }),
-    makeUser({ id: "d0e1f2a3-b4c5-4d6e-8f70-8192a3b4c5d6", firstName: "Frank", roles: ["ADMIN"] }),
-  ];
+const OWNERS = [
+  makeUser({ id: OWNER_ID, firstName: "Ricardo", lastName: "Mora", email: "ricardo@sabormagico.pe" }),
+  makeUser({ id: OWNER_2_ID, firstName: "Ana", lastName: "Díaz", email: "ana@sabormagico.pe" }),
+  makeUser({ id: "c9a1b2c3-d4e5-4f60-8a7b-9c0d1e2f3a4b", firstName: "Beto", isActive: false }),
+  makeUser({ id: "d0e1f2a3-b4c5-4d6e-8f70-8192a3b4c5d6", firstName: "Frank", roles: ["ADMIN"] }),
+];
 
-  it("ADMIN elige entre propietarios activos y guarda responsable y tiempo de respuesta", async () => {
+/** Tarjeta «Aprobación del propietario» de Empresa. */
+const ownerCard = async () => {
+  const title = await screen.findByText("Aprobación del propietario");
+  return title.closest("section") as HTMLElement;
+};
+
+describe("Empresa › Aprobación del propietario", () => {
+  it("muestra la nota del flujo y ADMIN elige entre propietarios activos", async () => {
     const config = makeConfig();
     const { put } = mockBackend(config);
-    vi.spyOn(usersApi, "list").mockResolvedValue(owners);
-    renderWithQuery(<SamantaView />);
+    vi.spyOn(usersApi, "list").mockResolvedValue(OWNERS);
+    renderWithQuery(<EmpresaView />);
+    const card = await ownerCard();
 
-    const select = await screen.findByLabelText("Responsable de aprobación");
+    expect(within(card).getByText(/Las solicitudes de Samanta y de la web se envían a este WhatsApp/)).toBeInTheDocument();
+    const select = within(card).getByLabelText("Responsable de aprobaciones");
     await waitFor(() =>
       expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
         "Sin responsable",
@@ -310,39 +321,106 @@ describe("Samanta", () => {
     expect(select).toHaveValue(OWNER_ID);
 
     fireEvent.change(select, { target: { value: OWNER_2_ID } });
-    fireEvent.change(screen.getByLabelText("Tiempo máximo de respuesta"), { target: { value: "45" } });
-    fireEvent.click(buttons().save);
+    fireEvent.change(within(card).getByLabelText("WhatsApp personal del propietario"), { target: { value: "+51 911 222 333" } });
+    fireEvent.click(within(card).getByRole("button", { name: "Guardar cambios" }));
 
-    await screen.findByText("Cambios guardados");
+    await within(card).findByText("Cambios guardados");
+    // PUT completo: los dos campos con el valor nuevo y el resto de la configuración vigente.
     expect(put).toHaveBeenCalledExactlyOnceWith({
       ...toPutRequest(config),
       approvalResponsibleId: OWNER_2_ID,
-      responseTimeoutMinutes: 45,
+      ownerWhatsappNumber: "+51911222333",
     });
+  });
+
+  it("vaciar el número lo envía como null (deja de enviar solicitudes)", async () => {
+    const config = makeConfig();
+    const { put } = mockBackend(config);
+    vi.spyOn(usersApi, "list").mockResolvedValue(OWNERS);
+    renderWithQuery(<EmpresaView />);
+    const card = await ownerCard();
+    fireEvent.change(within(card).getByLabelText("WhatsApp personal del propietario"), { target: { value: "" } });
+    fireEvent.click(within(card).getByRole("button", { name: "Guardar cambios" }));
+    await within(card).findByText("Cambios guardados");
+    expect(put).toHaveBeenCalledExactlyOnceWith({ ...toPutRequest(config), ownerWhatsappNumber: null });
+  });
+
+  it("no envía un número igual al del negocio ni uno sin formato internacional", async () => {
+    const { put } = mockBackend(makeConfig());
+    vi.spyOn(usersApi, "list").mockResolvedValue(OWNERS);
+    renderWithQuery(<EmpresaView />);
+    const card = await ownerCard();
+    const field = within(card).getByLabelText("WhatsApp personal del propietario");
+
+    fireEvent.change(field, { target: { value: "+51 987 000 192" } });
+    fireEvent.click(within(card).getByRole("button", { name: "Guardar cambios" }));
+    expect(await within(card).findByText(/distinto del WhatsApp del negocio/)).toBeInTheDocument();
+
+    fireEvent.change(field, { target: { value: "987654321" } });
+    fireEvent.click(within(card).getByRole("button", { name: "Guardar cambios" }));
+    expect(await within(card).findByText(/formato internacional/)).toBeInTheDocument();
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("muestra tal cual el 400 del backend", async () => {
+    mockBackend(makeConfig());
+    vi.spyOn(usersApi, "list").mockResolvedValue(OWNERS);
+    vi.spyOn(configApi, "put").mockRejectedValue(new ApiError(400, ["El responsable de aprobación no existe"]));
+    renderWithQuery(<EmpresaView />);
+    const card = await ownerCard();
+    fireEvent.change(within(card).getByLabelText("Responsable de aprobaciones"), { target: { value: "" } });
+    fireEvent.click(within(card).getByRole("button", { name: "Guardar cambios" }));
+    expect(await within(card).findByText("El responsable de aprobación no existe")).toBeInTheDocument();
   });
 
   it("avisa si el responsable guardado ya no es propietario activo", async () => {
     mockBackend(makeConfig());
-    vi.spyOn(usersApi, "list").mockResolvedValue([{ ...owners[0]!, roles: ["OPERATOR"] }, owners[1]!]);
-    renderWithQuery(<SamantaView />);
+    vi.spyOn(usersApi, "list").mockResolvedValue([{ ...OWNERS[0]!, roles: ["OPERATOR"] }, OWNERS[1]!]);
+    renderWithQuery(<EmpresaView />);
     expect(await screen.findByText(/Ricardo Mora ya no está activo o perdió el rol Propietario/)).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Ricardo Mora .*\(ya no es válido\)/ })).toBeInTheDocument();
   });
 
-  it("OWNER ve el responsable como texto y no consulta usuarios (GET /users es solo de ADMIN)", async () => {
+  it("OWNER ve número y responsable como texto y no consulta usuarios (GET /users es solo de ADMIN)", async () => {
     session.roles = ["OWNER"];
     mockBackend(makeConfig());
     const list = vi.spyOn(usersApi, "list");
-    renderWithQuery(<SamantaView />);
-    expect(await screen.findByLabelText("Responsable de aprobación")).toHaveValue("Ricardo Mora");
-    expect(screen.getByLabelText("Tiempo máximo de respuesta")).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Guardar cambios" })).toBeNull();
+    renderWithQuery(<EmpresaView />);
+    const card = await ownerCard();
+    expect(within(card).getByLabelText("Responsable de aprobaciones")).toHaveValue("Ricardo Mora");
+    expect(within(card).getByLabelText("WhatsApp personal del propietario")).toHaveValue("+51912345678");
+    expect(within(card).queryByRole("button", { name: "Guardar cambios" })).toBeNull();
     expect(list).not.toHaveBeenCalled();
+  });
+});
+
+describe("Samanta", () => {
+  it("guarda el tiempo de respuesta y muestra responsable y número, que se editan en Empresa", async () => {
+    const config = makeConfig();
+    const { put } = mockBackend(config);
+    const list = vi.spyOn(usersApi, "list");
+    renderWithQuery(<SamantaView />);
+
+    expect(await screen.findByLabelText("Responsable de aprobaciones")).toHaveValue("Ricardo Mora");
+    expect(screen.getByLabelText("WhatsApp personal del propietario")).toHaveValue("+51912345678");
+    fireEvent.change(screen.getByLabelText("Tiempo máximo de respuesta"), { target: { value: "45" } });
+    fireEvent.click(buttons().save);
+
+    await screen.findByText("Cambios guardados");
+    expect(put).toHaveBeenCalledExactlyOnceWith({ ...toPutRequest(config), responseTimeoutMinutes: 45 });
+    expect(list).not.toHaveBeenCalled();
+  });
+
+  it("OWNER ve el tiempo de respuesta en solo lectura", async () => {
+    session.roles = ["OWNER"];
+    mockBackend(makeConfig());
+    renderWithQuery(<SamantaView />);
+    expect(await screen.findByLabelText("Tiempo máximo de respuesta")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Guardar cambios" })).toBeNull();
   });
 
   it("muestra canales y reglas sin inventar estado: solo la regla del backend aparece encendida", async () => {
     mockBackend(makeConfig());
-    vi.spyOn(usersApi, "list").mockResolvedValue(owners);
     renderWithQuery(<SamantaView />);
     const whatsapp = await screen.findByRole("switch", { name: "WhatsApp: pendiente en el backend" });
     expect(whatsapp).toBeDisabled();

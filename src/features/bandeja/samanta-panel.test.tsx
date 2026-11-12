@@ -10,7 +10,9 @@ import {
   activeDraft,
   draftSource,
   isDraftOutdated,
+  RESERVATION_OUTCOME_LABEL,
   samantaMessageIds,
+  samantaReservationOutcomes,
   useAssistantDrafts,
 } from "./use-samanta";
 
@@ -71,6 +73,8 @@ function conversation(partial: Partial<Conversation> = {}): Conversation {
     customerId: "c3e8a9b2-5d4f-4a6e-8c1b-7f2d9e0a3b56",
     channel: "WHATSAPP",
     isAssistantPaused: false,
+    assistantPauseReason: null,
+    assistantPausedAt: null,
     assignedUserId: null,
     lastMessageAt: "2026-11-03T02:32:11.000Z",
     createdAt: "2026-10-28T19:14:05.000Z",
@@ -99,6 +103,7 @@ function draft(partial: Partial<SamantaDraft> = {}): SamantaDraft {
     reviewedById: null,
     editedById: null,
     status: "READY",
+    mode: "MANUAL",
     revision: 1,
     model: "mock",
     promptVersion: "samanta-drafts-v1",
@@ -112,10 +117,15 @@ function draft(partial: Partial<SamantaDraft> = {}): SamantaDraft {
     inputTokens: 10,
     outputTokens: 5,
     errorCode: null,
+    availableAt: null,
+    generationStartedAt: new Date().toISOString(),
     generationExpiresAt: new Date(Date.now() + 30_000).toISOString(),
     expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
     reviewedAt: null,
     outboundMessageId: null,
+    reservationProposal: null,
+    reservationRequestId: null,
+    reservationOutcome: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     ...partial,
@@ -342,4 +352,20 @@ describe("panel de Samanta", () => {
       expect(list).toHaveBeenCalled();
     },
   );
+});
+
+describe("resultado de la acción de reserva de Samanta (reservationOutcome)", () => {
+  it("asocia el mensaje enviado con su resultado, incluido ALREADY_DECIDED", () => {
+    const created = draft({ id: "d1", status: "APPROVED", mode: "AUTO", outboundMessageId: "m-30", reservationOutcome: "CREATED" });
+    const decided = draft({ id: "d2", status: "APPROVED", mode: "AUTO", outboundMessageId: "m-31", reservationOutcome: "ALREADY_DECIDED" });
+    const plain = draft({ id: "d3", status: "APPROVED", outboundMessageId: "m-32" });
+    const pending = draft({ id: "d4", status: "READY", reservationOutcome: "PROPOSED" });
+    const map = samantaReservationOutcomes([created, decided, plain, pending]);
+    expect([...map.entries()]).toEqual([
+      ["m-30", "CREATED"],
+      ["m-31", "ALREADY_DECIDED"],
+    ]);
+    expect(RESERVATION_OUTCOME_LABEL.ALREADY_DECIDED).toBe("Repitió la decisión del propietario");
+    expect(RESERVATION_OUTCOME_LABEL.CREATED).toBe("Solicitud registrada");
+  });
 });

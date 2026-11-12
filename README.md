@@ -6,7 +6,7 @@ según el mockup aprobado (`docs/diseno/`). Next.js 16 (App Router) + TypeScript
 - **Backend:** `bk-crm` (NestJS). El navegador nunca habla directo con él: el servidor de Next.js hace de
   intermediario (BFF) y guarda la sesión en cookies `httpOnly`.
 - **Modo simulado (mock):** backend en memoria con el mismo contrato que bk-crm, datos de ejemplo y un
-  simulador de canales (cliente, Samanta y dueño). Permite probar el flujo completo sin Meta ni IA.
+  simulador de canales (cliente, Samanta y propietario). Permite probar el flujo completo sin Meta ni IA.
 
 ---
 
@@ -41,14 +41,18 @@ Los datos simulados viven en memoria: al reiniciar el servidor vuelven a los dat
 
 ## 3. Simulador de canales (solo modo simulado)
 
-`/api/dev/simulador` hace de cliente, de Samanta y del dueño para recorrer el flujo central:
+`/api/dev/simulador` hace de cliente, de Samanta y del propietario para recorrer el flujo central (el mismo que bk-crm M8.1–M9.3):
 
 | Acción | Qué simula |
 | --- | --- |
 | `entrante` | Un mensaje de un cliente (nuevo o en una conversación existente) llega a la Bandeja |
 | `samanta` | Una respuesta de Samanta ya aprobada (crea el borrador aprobado y el mensaje con autor; no escribe si la conversación está en pausa). En la Bandeja también puedes pedir un borrador con «Generar borrador» |
-| `solicitud` | Samanta confirma fecha, hora, personas y servicio, y crea la solicitud **esperando al dueño**. Solo acepta servicios activos y aprobados. Con **más de 20 personas** no crea la solicitud y pasa la conversación a una persona |
-| `dueno` | El dueño responde `ACEPTAR` (la reserva entra al calendario) o `RECHAZAR` (Samanta propone otra fecha u hora) |
+| `solicitud` | Samanta envía el resumen, el cliente dice «Sí» y Samanta registra la solicitud (`READY_TO_SEND`, vinculada a la conversación). Por defecto se envía al propietario (`SENT_TO_OWNER` → `WAITING_RESPONSE`); con `"enviarAlDueno": false` no. Solo servicios activos y aprobados. Con **más de 20 personas** no crea nada y pasa la conversación a una persona |
+| `enviar_dueno` | Envía al propietario una solicitud `READY_TO_SEND` (`requestId`). Con `"aceptado": false` se queda en `SENT_TO_OWNER` |
+| `fallo_dueno` | La plantilla al propietario falla (`"estado": "FAILED"` o `"UNKNOWN"`, `errorCode`): la solicitud vuelve a `READY_TO_SEND` y no se reenvía |
+| `dueno` | El propietario responde `ACEPTAR` (reserva en el calendario), `RECHAZAR` o `PROPONER CAMBIO` (con `propuesta` opcional). Se avisa al cliente o queda `customerNoticeError` |
+| `dueno_propuesta` | Texto del propietario tras «Proponer cambio»: se agrega a `comments` como `CRM: propuesta del propietario…` |
+| `cliente_confirma` | El cliente vuelve a decir «Sí»: Samanta responde `ALREADY_DECIDED` o `ALREADY_REGISTERED` |
 | `reiniciar` | Restaura los datos de ejemplo y cierra todas las sesiones |
 
 Ejemplo completo en **PowerShell** (con `npm run dev` corriendo):
@@ -65,7 +69,7 @@ $c = Invoke-RestMethod -Method Post -Uri $sim -ContentType "application/json" `
 $s = Invoke-RestMethod -Method Post -Uri $sim -ContentType "application/json" `
   -Body (@{ accion = "solicitud"; conversationId = $c.conversationId; fecha = "2026-10-20T20:00:00-05:00"; personas = 4 } | ConvertTo-Json)
 
-# 3. El dueño acepta por WhatsApp: la reserva aparece en el Calendario
+# 3. El propietario acepta por WhatsApp: la reserva aparece en el Calendario y se avisa al cliente
 Invoke-RestMethod -Method Post -Uri $sim -ContentType "application/json" `
   -Body (@{ accion = "dueno"; requestId = $s.requestId; decision = "ACEPTAR" } | ConvertTo-Json)
 ```
@@ -109,8 +113,12 @@ Primer arranque con el backend real:
   solicitudes ni reservas, ni usar Samanta.
 - El catálogo del seed llega en borrador: aprueba en **Ajustes › Servicios** los servicios que se puedan ofrecer
   (Samanta, solicitudes y reservas solo usan servicios activos y aprobados).
-- Las solicitudes y reservas se registran desde el CRM («Nueva solicitud», «Nueva reserva»). bk-crm aún no tiene el
-  flujo del dueño, así que los estados Esperando, Aceptada y Rechazada no aparecen (ver sección 8).
+- Para que las solicitudes de Samanta y de la web lleguen al propietario, configura en **Ajustes › Empresa ›
+  Aprobación del propietario** su WhatsApp personal y el responsable de aprobaciones (un usuario OWNER activo).
+  Sin los dos, bk-crm no envía nada. El servidor necesita además `OWNER_APPROVAL_ENABLED=true` y la plantilla
+  aprobada en Meta.
+- El propietario acepta, rechaza o propone un cambio desde su WhatsApp; ADMIN y OWNER también pueden aprobar o
+  rechazar en **Solicitudes**. Al aceptar, la reserva entra al calendario.
 
 El contrato completo de bk-crm para el frontend está en `docs/frontend-api-completo.md` (copia del documento de
 bk-crm; si cambia allí, vuelve a copiarlo).
@@ -134,11 +142,11 @@ Las del frontend están en `.env.example`. Las `CRM_*` son solo del servidor y n
 | `NEXT_PUBLIC_CHAT_POLL_MS` | `4000` | Cada cuánto se actualiza el chat abierto |
 | `CRM_DEV_ORIGINS` | vacío | Solo `npm run dev`: hosts extra (p. ej., la IP de red) que pueden abrir el servidor con recarga en caliente |
 
-**Claves, número del dueño y tokens de Meta** van en el servidor de **bk-crm**, nunca en el frontend ni en
-el repositorio: `JWT_SECRET`, `JWT_REFRESH_SECRET`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_VERIFY_TOKEN`,
-`WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_BUSINESS_ACCOUNT_ID`, `META_APP_SECRET`, `RESEND_API_KEY` (ver
-`bk-crm/.env.example`). bk-crm todavía **no** tiene variable para el WhatsApp personal del dueño ni para la
-clave de la IA: se agregarán cuando exista ese flujo (pendiente en el backend).
+**Claves y tokens de Meta** van en el servidor de **bk-crm**, nunca en el frontend ni en el repositorio:
+`JWT_SECRET`, `JWT_REFRESH_SECRET`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`,
+`WHATSAPP_BUSINESS_ACCOUNT_ID`, `META_APP_SECRET`, `RESEND_API_KEY` (ver `bk-crm/.env.example`). El WhatsApp
+personal del propietario no es una variable: se guarda en la configuración del restaurante
+(`ownerWhatsappNumber`, **Ajustes › Empresa**).
 
 ## 6. Pruebas
 
@@ -151,8 +159,9 @@ npm run build       # build de producción
 ```
 
 - `npm test` incluye el **flujo de solicitud** contra el backend simulado (`src/lib/mock/request-flow.test.ts`):
-  mensaje entrante, solicitud esperando al dueño, ACEPTAR → reserva en el calendario, RECHAZAR → sin
-  reserva y nueva propuesta, grupos de más de 20 personas, toma de control del operador e idempotencia.
+  mensaje entrante, solicitud de Samanta enviada al propietario, ACEPTAR → reserva en el calendario y aviso al
+  cliente, RECHAZAR → sin reserva, PROPONER CAMBIO, aprobar y rechazar desde el CRM (con sus 409), grupos de más
+  de 20 personas, toma de control del operador e idempotencia.
 - `npm run test:e2e` reutiliza el servidor de `http://localhost:5173` si ya está corriendo; si no, levanta
   `npm run dev` en modo simulado. Otra URL: `E2E_BASE_URL=...`.
 
@@ -216,14 +225,19 @@ o «Pendiente en el backend». Lo pendiente:
   último mensaje del cliente, lo edita si hace falta y lo aprueba (sale como mensaje de quien aprueba) o lo
   descarta. Un mensaje se marca como de Samanta si salió de un borrador aprobado (`outboundMessageId`); la
   lista solo trae los 50 borradores más recientes. Con `SAMANTA_ENABLED=false` en bk-crm, el panel lo avisa.
-- El **flujo del dueño** por WhatsApp (enviar, ACEPTAR, RECHAZAR) no existe en bk-crm; solo el simulador lo
-  reproduce. Las pestañas Esperando, Aceptadas y Rechazadas lo indican.
+- **Flujo del propietario** (bk-crm M8.1–M9.3): las solicitudes de Samanta y de la web se envían solas al
+  WhatsApp del propietario (`SENT_TO_OWNER` → `WAITING_RESPONSE`), y sus respuestas las procesa el backend
+  (`ACCEPTED` con reserva, `REJECTED` o `MODIFICATION_REQUESTED`, «Cambio propuesto»). El frontend no tiene
+  rutas para esto: lee los estados con polling. «Cambio propuesto» tiene pestaña propia porque necesita a una
+  persona del equipo (no hay ruta para avanzarla hasta la renegociación, M10). Aprobar o rechazar desde el CRM
+  **no avisa al cliente**: hay que avisarle por la Bandeja. La conversación del contacto «Propietario» tiene a
+  Samanta en pausa `MANUAL`: la Bandeja oculta «Reanudar» y «Devolver a Samanta» en ella.
 - **Escribir toma el control:** el backend no lo hace solo; el frontend pausa a Samanta, envía y se asigna
   la conversación (en ese orden). Un operador no puede escribir en una conversación que atiende otra persona;
   un administrador sí, sin cambiar el responsable. *Pendiente de decidir con producto:* con la conversación en
   pausa no se pueden pedir borradores.
-- **Eventos del chat** («Solicitud enviada al dueño», «Operador tomó la conversación»): no existen; el avance
-  se ve en la línea de tiempo del panel derecho.
+- **Eventos del chat** («Solicitud enviada al propietario», «Operador tomó la conversación»): no existen; el
+  avance se ve en el historial del detalle de la solicitud y en la línea de tiempo del panel derecho.
 - **Envían WhatsApp y Messenger** (canal Facebook): tope de 4096 y 2000 caracteres y ventana de 24 h en los dos.
   Instagram y Web se ven en la Bandeja, pero responder por ellos queda deshabilitado con una explicación.
   Messenger no informa lecturas (como mucho «Entregado») y sus clientes no tienen teléfono: se muestran por el
@@ -233,7 +247,7 @@ o «Pendiente en el backend». Lo pendiente:
   confirmación. *Pendiente de confirmar con el dueño del producto.*
 - **Solo un administrador crea reservas** («Nueva reserva»); un operador las edita, reprograma, toma o libera.
 - **Zona o área** de la reserva no existe en el backend: se muestra el servicio.
-- **Tiempo de respuesta del dueño** y «Resueltas por Samanta» no se registran: se muestran «—».
+- **«Resueltas por Samanta»** no se registra: se muestra «—».
 - **Estadísticas** se calculan en el navegador con los listados (no hay endpoint de estadísticas).
 - **Búsqueda** por nombre, teléfono o correo del cliente (el backend no busca en los mensajes).
 - **Logotipo** por URL (no hay subida de archivos).

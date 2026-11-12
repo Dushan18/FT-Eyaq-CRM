@@ -19,28 +19,38 @@ import { Button, ChannelDot, KpiCard, PageHeader, Panel, Pill, Segmented } from 
 import { PaginationBar } from "@/components/ui/pagination";
 import { EmptyState, ErrorState, InlineNotice, LoadingState } from "@/components/ui/state";
 import { parsePage } from "@/features/clientes/clientes-utils";
+import { isUuid } from "@/features/calendario/calendar-utils";
+import { ApproveRequestDialog, RejectRequestDialog } from "./request-actions";
+import { RequestDetailSheet } from "./request-detail";
+import { canApproveRequest, canRejectRequest } from "./request-detail-logic";
 import { CancelRequestDialog, EditRequestDialog, NewRequestDialog } from "./request-form";
 import { isEditableRequest } from "./request-form-logic";
 
+/**
+ * «Cambio propuesto» (MODIFICATION_REQUESTED) tiene pestaña propia y no va en «Esperando»: el propietario ya
+ * respondió y ahora le toca a una persona del equipo coordinar con el cliente.
+ */
 const TABS: ReadonlyArray<{ value: RequestTab; label: string }> = [
   { value: "todas", label: "Todas" },
   { value: "esperando", label: "Esperando" },
+  { value: "cambio", label: "Cambio propuesto" },
   { value: "aceptadas", label: "Aceptadas" },
   { value: "rechazadas", label: "Rechazadas" },
 ];
+const TAB_VALUES = TABS.map((t) => t.value);
 
 const PAGE_SIZE = 50;
 
 const linkButton = "cursor-pointer border-0 bg-transparent p-0 font-semibold text-brand hover:underline";
 const COLUMNS = "grid-cols-[150px_minmax(150px,1.3fr)_150px_70px_minmax(130px,1.1fr)_150px_150px]";
-/** Con permiso de editar o cancelar se añade la columna de acciones. */
-const COLUMNS_WITH_ACTIONS = "grid-cols-[150px_minmax(150px,1.3fr)_150px_70px_minmax(130px,1.1fr)_150px_150px_140px]";
-/** Columnas mínimas + huecos + relleno (1058 px; 1210 px con acciones): por debajo, la tabla se desplaza. */
+/** Con permiso de editar, cancelar o decidir se añade la columna de acciones (hasta cuatro botones, en dos filas). */
+const COLUMNS_WITH_ACTIONS = "grid-cols-[150px_minmax(150px,1.3fr)_150px_70px_minmax(130px,1.1fr)_150px_150px_170px]";
+/** Columnas mínimas + huecos + relleno (1058 px; 1240 px con acciones): por debajo, la tabla se desplaza. */
 const TABLE_MIN_WIDTH = "min-w-265";
-const TABLE_MIN_WIDTH_WITH_ACTIONS = "min-w-303";
+const TABLE_MIN_WIDTH_WITH_ACTIONS = "min-w-310";
 
-/** Pestañas y KPI que dependen del flujo del dueño (enviar, aceptar y rechazar), que bk-crm aún no tiene. */
-const OWNER_FLOW_SOON = "Flujo del dueño: próximamente";
+const SUBTITLE =
+  "Llegan de Samanta, de la web o del equipo. Las de Samanta y la web se envían al WhatsApp del propietario; cuando las acepta, la reserva entra al calendario.";
 
 /** Total de solicitudes en un estado (lectura barata: limit=1 y se usa `total`). */
 function useStatusCount(status: ReservationRequestStatus) {
@@ -75,22 +85,30 @@ function KpiValue({ query }: { query: KpiQuery }) {
 
 export function SolicitudesView() {
   const url = useUrlParams();
-  const tab = pickOption(url.get("tab"), ["todas", "esperando", "aceptadas", "rechazadas"] as const, "todas");
+  const tab = pickOption(url.get("tab"), TAB_VALUES, "todas");
   // Entero de 1 a 1 000 000: con decimales o más grande, el backend responde 400.
   const page = parsePage(url.get("pagina"));
   const statuses = REQUEST_TAB_STATUSES[tab];
   const session = useSession();
   const canEdit = session.can("request.edit");
   const canCancel = session.can("request.cancel");
-  const withActions = canEdit || canCancel;
+  const canDecide = session.can("request.approve");
+  const withActions = canEdit || canCancel || canDecide;
   const columns = withActions ? COLUMNS_WITH_ACTIONS : COLUMNS;
+  // Detalle abierto: `solicitud` en la URL, para poder enlazarlo.
+  const detailParam = url.get("solicitud");
+  const detailId = isUuid(detailParam) ? detailParam : null;
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<ReservationRequest | null>(null);
   const [cancelling, setCancelling] = useState<ReservationRequest | null>(null);
+  const [approving, setApproving] = useState<ReservationRequest | null>(null);
+  const [rejecting, setRejecting] = useState<ReservationRequest | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const openDetail = (id: string | null) => url.set({ solicitud: id });
 
   const sent = useStatusCount("SENT_TO_OWNER");
   const waiting = useStatusCount("WAITING_RESPONSE");
+  const proposed = useStatusCount("MODIFICATION_REQUESTED");
   const accepted = useStatusCount("ACCEPTED");
   const rejected = useStatusCount("REJECTED");
   const waitingTotal: KpiQuery = {
@@ -101,6 +119,7 @@ export function SolicitudesView() {
 
   const list = useQuery({
     queryKey: qk.requests({ tab, page }),
+    // El backend cambia los estados solo (envío al propietario y sus respuestas): se refresca con polling.
     queryFn: async () => {
       if (statuses === null || statuses.length === 1) {
         return requestsApi.list({ page, limit: PAGE_SIZE, ...(statuses ? { status: statuses[0] } : {}) });
@@ -150,7 +169,7 @@ export function SolicitudesView() {
     <Panel className="flex h-full flex-col gap-5.5 overflow-y-auto px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
       <PageHeader
         title="Solicitudes"
-        subtitle="Pedidos de reserva registrados en el CRM. Con fecha, hora y personas quedan «Lista para enviar»."
+        subtitle={SUBTITLE}
         actions={
           <div className="flex flex-wrap items-center gap-3">
             <Segmented
@@ -169,20 +188,26 @@ export function SolicitudesView() {
       />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <KpiCard label="Esperando al dueño" value={<KpiValue query={waitingTotal} />} valueColor="#b14a0b" sub={OWNER_FLOW_SOON} />
-        <KpiCard label="Aceptadas" value={<KpiValue query={accepted} />} valueColor="#14753f" sub={OWNER_FLOW_SOON} />
-        <KpiCard label="Rechazadas" value={<KpiValue query={rejected} />} valueColor="#b42323" sub={OWNER_FLOW_SOON} />
         <KpiCard
-          label="Respuesta media"
-          value={<span title="El backend aún no registra cuándo responde el dueño">—</span>}
-          sub="Sin registro de respuesta del dueño"
+          label="Esperando al propietario"
+          value={<KpiValue query={waitingTotal} />}
+          valueColor="#b14a0b"
+          sub="Enviadas a su WhatsApp"
         />
+        <KpiCard label="Cambio propuesto" value={<KpiValue query={proposed} />} valueColor="#9a3a06" sub="Necesitan a una persona del equipo" />
+        <KpiCard label="Aceptadas" value={<KpiValue query={accepted} />} valueColor="#14753f" sub="Con reserva en el calendario" />
+        <KpiCard label="Rechazadas" value={<KpiValue query={rejected} />} valueColor="#b42323" sub="Sin reserva" />
       </div>
 
-      {tab !== "todas" ? (
-        <InlineNotice>
-          Esta pestaña depende del envío al dueño para aceptar o rechazar, que llegará próximamente. Por ahora las solicitudes
-          quedan en «Negociando», «Lista para enviar» o «Cancelada».
+      {proposed.data && tab !== "cambio" ? (
+        <InlineNotice tone="warning">
+          {proposed.data === 1
+            ? "1 solicitud tiene un cambio propuesto por el propietario"
+            : `${proposed.data} solicitudes tienen un cambio propuesto por el propietario`}
+          : coordina el cambio con el cliente.{" "}
+          <button type="button" onClick={() => url.set({ tab: "cambio", pagina: null })} className={linkButton}>
+            Ver
+          </button>
         </InlineNotice>
       ) : null}
 
@@ -243,8 +268,11 @@ export function SolicitudesView() {
               request={r}
               columns={columns}
               actions={withActions}
+              onOpen={() => openDetail(r.id)}
               onEdit={canEdit ? () => setEditing(r) : undefined}
               onCancel={canCancel ? () => setCancelling(r) : undefined}
+              onApprove={canDecide ? () => setApproving(r) : undefined}
+              onReject={canDecide ? () => setRejecting(r) : undefined}
             />
           ))}
         </div>
@@ -270,6 +298,30 @@ export function SolicitudesView() {
         onClose={() => setCancelling(null)}
         onCancelled={(r) => setNotice(`Se canceló la solicitud ${r.code}.`)}
       />
+      <ApproveRequestDialog
+        request={approving}
+        onClose={() => setApproving(null)}
+        onApproved={({ request, reservation }) =>
+          setNotice(
+            `Se aprobó la solicitud ${request.code}: la reserva ${reservation.code} ya está en el calendario. Avísale al cliente por la Bandeja.`,
+          )
+        }
+      />
+      <RejectRequestDialog
+        request={rejecting}
+        onClose={() => setRejecting(null)}
+        onRejected={(r) => setNotice(`Se rechazó la solicitud ${r.code}. Avísale al cliente por la Bandeja.`)}
+      />
+      <RequestDetailSheet
+        requestId={detailId}
+        onClose={() => openDetail(null)}
+        actions={{
+          onApprove: canDecide ? setApproving : undefined,
+          onReject: canDecide ? setRejecting : undefined,
+          onEdit: canEdit ? setEditing : undefined,
+          onCancel: canCancel ? setCancelling : undefined,
+        }}
+      />
     </Panel>
   );
 }
@@ -281,15 +333,21 @@ function RequestRow({
   request: r,
   columns,
   actions,
+  onOpen,
   onEdit,
   onCancel,
+  onApprove,
+  onReject,
 }: {
   request: ReservationRequest;
   columns: string;
-  /** La tabla tiene columna de acciones (permiso de editar o cancelar). */
+  /** La tabla tiene columna de acciones (permiso de editar, cancelar o decidir). */
   actions: boolean;
+  onOpen: () => void;
   onEdit?: () => void;
   onCancel?: () => void;
+  onApprove?: () => void;
+  onReject?: () => void;
 }) {
   const { timeZone } = useRestaurant();
   const now = useNow();
@@ -298,11 +356,27 @@ function RequestRow({
   const name = customerName(r.customer, r.sourceChannel);
   // Editar y cancelar solo en «Negociando» y «Lista para enviar» (en otro estado el backend responde 409).
   const editable = isEditableRequest(r.status);
+  const attention = r.status === "MODIFICATION_REQUESTED";
 
   return (
-    <div role="row" className={`grid ${columns} items-center gap-3 border-t border-line-2 px-4.5 py-3.5 text-[13.5px]`}>
-      <span role="cell" className="font-bold">
-        {r.code}
+    <div
+      role="row"
+      className={cn(
+        `grid ${columns} items-center gap-3 border-t border-line-2 px-4.5 py-3.5 text-[13.5px]`,
+        // «Cambio propuesto» necesita a una persona: la fila se destaca.
+        attention && "bg-[#fff7f0] shadow-[inset_3px_0_0_#f26a1b]",
+      )}
+    >
+      <span role="cell">
+        <button
+          type="button"
+          onClick={onOpen}
+          aria-label={`Ver la solicitud ${r.code}`}
+          className="cursor-pointer border-0 bg-transparent p-0 text-left font-bold text-ink hover:text-brand hover:underline"
+        >
+          {r.code}
+        </button>
+        {r.externalReference ? <span className="block text-[11.5px] text-subtle">Web {r.externalReference}</span> : null}
       </span>
       <span role="cell" className="flex min-w-0 items-center gap-2">
         <ChannelDot channel={r.sourceChannel} />
@@ -331,7 +405,17 @@ function RequestRow({
         </button>
       </span>
       {actions ? (
-        <span role="cell" className="flex justify-end gap-1.5">
+        <span role="cell" className="flex flex-wrap justify-end gap-1.5">
+          {onApprove && canApproveRequest(r.status) ? (
+            <button type="button" onClick={onApprove} aria-label={`Aprobar la solicitud ${r.code}`} className={rowButton}>
+              Aprobar
+            </button>
+          ) : null}
+          {onReject && canRejectRequest(r.status) ? (
+            <button type="button" onClick={onReject} aria-label={`Rechazar la solicitud ${r.code}`} className={rowButton}>
+              Rechazar
+            </button>
+          ) : null}
           {editable && onEdit ? (
             <button type="button" onClick={onEdit} aria-label={`Editar la solicitud ${r.code}`} className={rowButton}>
               Editar

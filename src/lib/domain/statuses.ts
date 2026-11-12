@@ -3,12 +3,16 @@ import { TONES, type Tone } from "./tones";
 
 // ---------------------------------------------------------------- solicitudes
 
-/** Grupos del mockup: definen el color y las pestañas de Solicitudes. */
-export type RequestGroup = "negociando" | "esperando" | "aceptada" | "rechazada" | "cancelada";
+/**
+ * Grupos del mockup: definen el color y las pestañas de Solicitudes. «cambio» es MODIFICATION_REQUESTED: el
+ * propietario propuso un cambio y la solicitud espera a una persona del equipo, no al propietario.
+ */
+export type RequestGroup = "negociando" | "esperando" | "cambio" | "aceptada" | "rechazada" | "cancelada";
 
 export const REQUEST_GROUP_TONE: Record<RequestGroup, Tone> = {
   negociando: TONES.blue,
   esperando: TONES.amber,
+  cambio: TONES.orange,
   aceptada: TONES.green,
   rechazada: TONES.red,
   cancelada: TONES.gray,
@@ -17,14 +21,29 @@ export const REQUEST_GROUP_TONE: Record<RequestGroup, Tone> = {
 export const REQUEST_STATUS: Record<ReservationRequestStatus, { label: string; group: RequestGroup }> = {
   INCOMPLETE_DATA: { label: "Negociando", group: "negociando" },
   READY_TO_SEND: { label: "Lista para enviar", group: "negociando" },
-  SENT_TO_OWNER: { label: "Enviada al dueño", group: "esperando" },
-  WAITING_RESPONSE: { label: "Esperando al dueño", group: "esperando" },
+  SENT_TO_OWNER: { label: "Enviada al propietario", group: "esperando" },
+  WAITING_RESPONSE: { label: "Esperando al propietario", group: "esperando" },
   ACCEPTED: { label: "Aceptada", group: "aceptada" },
   REJECTED: { label: "Rechazada", group: "rechazada" },
-  MODIFICATION_REQUESTED: { label: "Cambios solicitados", group: "negociando" },
+  MODIFICATION_REQUESTED: { label: "Cambio propuesto", group: "cambio" },
+  // Ninguna ruta lo asigna todavía (renegociación, M10).
   RENEGOTIATING: { label: "Renegociando", group: "negociando" },
   CANCELLED: { label: "Cancelada", group: "cancelada" },
 };
+
+/** Estados en los que ADMIN y OWNER pueden aprobar (POST …/approve); en otro estado, 409. */
+export const APPROVABLE_REQUEST_STATUSES: readonly ReservationRequestStatus[] = ["READY_TO_SEND", "SENT_TO_OWNER", "WAITING_RESPONSE"];
+
+/** Estados en los que ADMIN y OWNER pueden rechazar (POST …/reject); en otro estado, 409. */
+export const REJECTABLE_REQUEST_STATUSES: readonly ReservationRequestStatus[] = [
+  "INCOMPLETE_DATA",
+  "READY_TO_SEND",
+  "SENT_TO_OWNER",
+  "WAITING_RESPONSE",
+];
+
+/** Estados en los que la solicitud ya tiene decisión (del propietario o del CRM). CANCELLED no cuenta: la retiró el equipo. */
+export const DECIDED_REQUEST_STATUSES: readonly ReservationRequestStatus[] = ["ACCEPTED", "REJECTED", "MODIFICATION_REQUESTED"];
 
 export function requestStatusView(status: ReservationRequestStatus): { label: string; tone: Tone; group: RequestGroup } {
   const meta = REQUEST_STATUS[status];
@@ -35,6 +54,7 @@ export function requestStatusView(status: ReservationRequestStatus): { label: st
 export const REQUEST_TAB_STATUSES = {
   todas: null,
   esperando: ["SENT_TO_OWNER", "WAITING_RESPONSE"],
+  cambio: ["MODIFICATION_REQUESTED"],
   aceptadas: ["ACCEPTED"],
   rechazadas: ["REJECTED"],
 } as const satisfies Record<string, readonly ReservationRequestStatus[] | null>;
@@ -62,15 +82,17 @@ export function requestTimeline(status: ReservationRequestStatus): TimelineStep[
   const skipped = group === "cancelada" ? 1 : -1;
   const final: [string, string, string] =
     group === "aceptada"
-      ? ["Aceptada por el dueño", "Registrada en el calendario", "#1f9d55"]
+      ? ["Aceptada", "Reserva en el calendario", "#1f9d55"]
       : group === "rechazada"
-        ? ["Rechazada por el dueño", "Samanta propone otra alternativa", "#dc2626"]
-        : group === "cancelada"
-          ? ["Cancelada", "Retirada del calendario", "#6b7385"]
-          : ["Respuesta del dueño", "ACEPTAR o RECHAZAR", "#1f3fbf"];
+        ? ["Rechazada", "No se registró ninguna reserva", "#dc2626"]
+        : group === "cambio"
+          ? ["Cambio propuesto", "Coordina el cambio con el cliente", "#f26a1b"]
+          : group === "cancelada"
+            ? ["Cancelada", "Retirada por el equipo", "#6b7385"]
+            : ["Respuesta del propietario", "Aceptar, rechazar o proponer cambio", "#1f3fbf"];
   const defs: Array<[string, string, string]> = [
-    ["Samanta negocia", status === "READY_TO_SEND" ? "Datos completos: fecha, hora y personas" : "Fecha, hora, personas y servicio", "#1f3fbf"],
-    ["Enviada al dueño", "Por WhatsApp personal", "#f26a1b"],
+    ["Datos de la reserva", status === "READY_TO_SEND" ? "Datos completos: fecha, hora y personas" : "Fecha, hora, personas y servicio", "#1f3fbf"],
+    ["Enviada al propietario", "Por su WhatsApp personal", "#f26a1b"],
     final,
   ];
   return defs.map(([label, sub, color], i) => {

@@ -11,6 +11,7 @@ import {
   responsibleOptions,
   sameDay,
   sameValue,
+  ownerApprovalValues,
   samantaValues,
   setupRequestInput,
   timeZoneOptions,
@@ -74,11 +75,15 @@ describe("modelos de formulario", () => {
     expect(values).not.toHaveProperty("latitude");
   });
 
-  it("samantaValues: sin responsable es cadena vacía y el tiempo se edita como texto", () => {
-    expect(samantaValues(makeConfig({ approvalResponsibleId: null, approvalResponsible: null }))).toEqual({
-      approvalResponsibleId: "",
-      responseTimeoutMinutes: "30",
-    });
+  it("samantaValues: el tiempo se edita como texto (el responsable pasó a Empresa)", () => {
+    expect(samantaValues(makeConfig())).toEqual({ responseTimeoutMinutes: "30" });
+  });
+
+  it("ownerApprovalValues: sin número ni responsable son cadenas vacías", () => {
+    expect(ownerApprovalValues(makeConfig())).toEqual({ ownerWhatsappNumber: "+51912345678", approvalResponsibleId: OWNER_ID });
+    expect(
+      ownerApprovalValues(makeConfig({ ownerWhatsappNumber: null, approvalResponsibleId: null, approvalResponsible: null })),
+    ).toEqual({ ownerWhatsappNumber: "", approvalResponsibleId: "" });
   });
 
   it("horariosValues trata como cerrado un día que falta o que no tiene horas", () => {

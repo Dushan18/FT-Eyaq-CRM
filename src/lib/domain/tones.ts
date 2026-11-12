@@ -12,6 +12,8 @@ export const TONES = {
   gray: { bg: "#f0f2f5", fg: "#4a5368" },
   grayMuted: { bg: "#f0f2f5", fg: "#6b7385" },
   teal: { bg: "#e6f4f1", fg: "#0f6b5c" },
+  /** Atención: requiere a una persona (p. ej. «Cambio propuesto» por el propietario). */
+  orange: { bg: "#ffe8d6", fg: "#9a3a06" },
   event: { bg: "#eceff4", fg: "#4a5368" },
 } as const satisfies Record<string, Tone>;
 

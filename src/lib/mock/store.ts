@@ -8,9 +8,11 @@ import type {
   Conversation,
   Customer,
   CustomerInterest,
+  CustomerNoticeError,
   Message,
   ReservationNote,
   ReservationRequest,
+  ReservationRequestStatusEntry,
   ReservationRescheduleEntry,
   Reservation,
   RestaurantConfig,
@@ -43,7 +45,23 @@ export type MockCustomer = Customer & {
 
 export type MockConversation = Omit<Conversation, "customer" | "assignedUser" | "unreadCount">;
 
-export type MockRequest = Omit<ReservationRequest, "customer" | "commercialItem">;
+/** Entrada del historial de estados tal como se guarda (el `actor` se resuelve al leer el detalle). */
+export type MockStatusEntry = Omit<ReservationRequestStatusEntry, "actor">;
+
+/**
+ * Solicitud guardada. Los campos internos (historial, mensaje al propietario y aviso al cliente) solo salen
+ * en el detalle (`GET /reservation-requests/:id`); el listado y las escrituras los quitan (`requestOut`).
+ */
+export type MockRequest = Omit<ReservationRequest, "customer" | "commercialItem"> & {
+  /** Cambios reales de estado, en orden de llegada. */
+  statusHistory: MockStatusEntry[];
+  /** Plantilla de WhatsApp que pidió la aprobación al propietario (M9.1); null si no se envió. */
+  ownerMessageId: string | null;
+  /** M9.3: aviso al cliente de la decisión del propietario. */
+  customerNoticeMessageId: string | null;
+  /** M9.3: por qué no se avisó al cliente. Nunca junto con customerNoticeMessageId. */
+  customerNoticeError: CustomerNoticeError | null;
+};
 
 export type MockReservation = Omit<Reservation, "customer" | "commercialItem" | "assignedUser"> & {
   noteHistory: Array<Omit<ReservationNote, "author">>;
@@ -65,6 +83,11 @@ export interface MockStore {
   drafts: SamantaDraft[];
   /** "<conversationId>:<Idempotency-Key>" → mensaje saliente (también "samanta-<draftId>" al aprobar). */
   idempotency: Map<string, { messageId: string; authorUserId: string; content: string }>;
+  /**
+   * Plantillas de WhatsApp enviadas: id del mensaje → nombre de la plantilla. `Message` de ft-crm todavía no
+   * trae `templateName`; el detalle de la solicitud lo expone en `customerNoticeMessage.templateName`.
+   */
+  templates: Map<string, string>;
   sequences: { request: number; reservation: number };
 }
 

@@ -2,9 +2,25 @@
  * Datos de ejemplo del modo mock. Reproducen los escenarios del mockup aprobado (docs/diseno) con
  * datos inventados de Perú (el backend solo admite PEN/USD y zona America/Lima).
  * Las fechas se calculan respecto de "ahora" para que la demo siempre esté vigente.
+ *
+ * Flujo de aprobación del propietario (M8.1–M9.3): los escenarios se reproducen con la misma lógica que las
+ * rutas y el simulador (./requests), en orden cronológico y con instantes en el pasado, para que el
+ * historial, la conversación del «Propietario» y los avisos al cliente queden coherentes:
+ * - RES-…461 (María, WhatsApp, Samanta): WAITING_RESPONSE, plantilla al propietario DELIVERED.
+ * - RES-…460 (Diego, Instagram, Samanta): SENT_TO_OWNER, plantilla QUEUED.
+ * - RES-…462 (Sofía, WhatsApp, Samanta): ACCEPTED por el propietario, reserva CONFIRMED, aviso entregado y
+ *   un «sí» tardío con respuesta automática ALREADY_DECIDED.
+ * - RES-…465 (Gabriel, WhatsApp, Samanta): MODIFICATION_REQUESTED, propuesta en comments, aviso entregado y
+ *   conversación en pausa SAMANTA_HANDOFF.
+ * - RES-…449 (Ricardo, Instagram, Samanta): REJECTED por el propietario, sin aviso (WINDOW_CLOSED).
+ * - RES-…466 (Patricia, web SM-…): la plantilla falló (WHATSAPP_SEND_REJECTED) y volvió a READY_TO_SEND.
+ * - RES-…468 (Rocío, web SM-…): INCOMPLETE_DATA. RES-…469 (Natalia, teléfono): READY_TO_SEND creada en el CRM.
+ * - RES-…438 (Felipe): ACCEPTED en el CRM (USER). RES-…431 (Camila V.): REJECTED en el CRM con motivo.
+ * - RES-…455 (Jorge): CANCELLED con motivo. Las demás son anteriores al 10/11 (historial vacío).
  */
 import { TZDate } from "@date-fns/tz";
 import type {
+  AssistantPauseReason,
   CommercialCategory,
   CommercialItem,
   CommercialItemType,
@@ -15,11 +31,24 @@ import type {
   ReservationStatus,
   RestaurantConfig,
   RoleCode,
-  SamantaDraft,
+  SamantaReservationOutcome,
+  SamantaReservationProposal,
 } from "@/lib/api/types";
-import { RESERVED_IDEMPOTENCY_PREFIX } from "@/lib/api/types";
-import { approvedDraft, knowledgeHash } from "./samanta";
-import { iso, uuid, type MockConversation, type MockCustomer, type MockRequest, type MockReservation, type MockStore, type MockUser } from "./store";
+import { RESERVED_IDEMPOTENCY_PREFIX, SAMANTA_USER_ID } from "@/lib/api/types";
+import {
+  SAMANTA_REQUEST_NOTE,
+  alreadyDecidedText,
+  changeStatus,
+  dayAndTime,
+  ownerConversation,
+  ownerMessageFailed,
+  ownerProposal,
+  ownerReply,
+  samantaTexts,
+  sendToOwner,
+} from "./requests";
+import { approvedDraft, autoDraft, knowledgeHash } from "./samanta";
+import { iso, lastSequence, uuid, type MockConversation, type MockCustomer, type MockRequest, type MockReservation, type MockStore, type MockUser } from "./store";
 
 export const MOCK_TIME_ZONE = "America/Lima";
 const MIN = 60_000;
@@ -41,17 +70,30 @@ function monthDayAt(now: number, day: number, time: string): number {
   return new TZDate(today.getFullYear(), today.getMonth(), day, hh, mm, 0, 0, MOCK_TIME_ZONE).getTime();
 }
 
-/** Instante relativo a hoy (días hacia atrás) a una hora fija en Lima. */
+/** Instante relativo a hoy (días hacia atrás; negativo, hacia adelante) a una hora fija en Lima. */
 function daysAgoAt(now: number, daysAgo: number, time: string): number {
   const today = new TZDate(now, MOCK_TIME_ZONE);
   const [hh, mm] = time.split(":").map(Number);
   return new TZDate(today.getFullYear(), today.getMonth(), today.getDate() - daysAgo, hh, mm, 0, 0, MOCK_TIME_ZONE).getTime();
 }
 
+const daysAhead = (now: number, days: number, time: string) => daysAgoAt(now, -days, time);
+
 function dayOfYear(now: number, month: number, day: number, time: string): number {
   const today = new TZDate(now, MOCK_TIME_ZONE);
   const [hh, mm] = time.split(":").map(Number);
   return new TZDate(today.getFullYear(), month, day, hh, mm, 0, 0, MOCK_TIME_ZONE).getTime();
+}
+
+/** Fecha local AAAA-MM-DD (la de `reservationProposal.date`). */
+function localDate(ms: number): string {
+  const d = new TZDate(ms, MOCK_TIME_ZONE);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Código de la web: SM-AAAAMMDD-XXXXXX. */
+function webCode(ms: number, suffix: string): string {
+  return `SM-${localDate(ms).replace(/-/g, "")}-${suffix}`;
 }
 
 export function buildSeed(now: number = Date.now()): MockStore {
@@ -69,6 +111,7 @@ export function buildSeed(now: number = Date.now()): MockStore {
     password: "",
   });
   const admin = user("Frank", "Quispe", "frank@eyaqsystems.com", ["ADMIN"], 75);
+  // El OWNER activo es el responsable de aprobación (approvalResponsibleId) y el actor de las entradas OWNER.
   const owner = user("Ricardo", "Mora", "ricardo@sabormagico.pe", ["OWNER"], 110);
   const operator = user("Camila", "Torres", "camila@sabormagico.pe", ["OPERATOR"], 1);
   const support = user("Soporte", "EYAQ", "soporte@eyaqsystems.com", ["SUPPORT"], 22 * 60);
@@ -90,6 +133,8 @@ export function buildSeed(now: number = Date.now()): MockStore {
     latitude: -12.1216,
     longitude: -77.0298,
     whatsappNumber: "+51987000192",
+    // WhatsApp personal del propietario: adonde llegan las solicitudes para aprobar (M9.1).
+    ownerWhatsappNumber: "+51999888777",
     email: "reservas@sabormagico.pe",
     website: "https://sabormagico.pe",
     currency: "PEN",
@@ -181,8 +226,26 @@ export function buildSeed(now: number = Date.now()): MockStore {
   const itPisco = item("BEVERAGE", catMenu, "Pisco sour", null, "22.00", { approval: "DRAFT", order: 3 });
   const items = [itCena, itAlmuerzo, itEjecutivo, itLomo, itParrillada, itMenuDia, itDegustacion, itTorta, itSalon, itPisco];
 
+  // ---------------------------------------------------------------- estado (lo usan los flujos de ./requests)
+  const store: MockStore = {
+    users,
+    sessions: [],
+    config,
+    categories,
+    items,
+    customers: [],
+    requests: [],
+    reservations: [],
+    conversations: [],
+    messages: [],
+    drafts: [],
+    idempotency: new Map(),
+    templates: new Map(),
+    sequences: { request: 400, reservation: 200 },
+  };
+  const { customers, requests, reservations, conversations, messages, drafts, idempotency } = store;
+
   // ---------------------------------------------------------------- clientes
-  const customers: MockCustomer[] = [];
   const customer = (
     firstName: string | null,
     lastName: string | null,
@@ -244,8 +307,8 @@ export function buildSeed(now: number = Date.now()): MockStore {
   const lucia = customer("Lucía", "Fernández", "+51 912 006 441", null, "WHATSAPP", "NEW", daysAgoAt(now, 1, "12:28"), daysAgoAt(now, 1, "12:30"), [
     { itemId: itMenuDia.id, at: daysAgoAt(now, 1, "12:30") },
   ]);
-  const ricardo = customer("Ricardo", "Núñez", "+51 918 330 901", "rnunez@correo.pe", "INSTAGRAM", "LOST", now - 4 * DAY, daysAgoAt(now, 1, "11:15"), [
-    { itemId: itAlmuerzo.id, at: daysAgoAt(now, 1, "10:02") },
+  const ricardo = customer("Ricardo", "Núñez", "+51 918 330 901", "rnunez@correo.pe", "INSTAGRAM", "REQUESTED_RESERVATION", now - 4 * DAY, now - 29 * HOUR, [
+    { itemId: itAlmuerzo.id, at: now - 29 * HOUR },
   ]);
   const paola = customer("Paola", "Duarte", "+51 904 771 229", "paoduarte@correo.pe", "FACEBOOK", "CONFIRMED", now - 9 * DAY, daysAgoAt(now, 2, "09:25"), [
     { itemId: itCena.id, at: daysAgoAt(now, 2, "09:10") },
@@ -259,13 +322,18 @@ export function buildSeed(now: number = Date.now()): MockStore {
   const felipe = customer("Felipe", "Ortiz", "+51 901 552 663", "fortiz@empresa.pe", "WEBSITE", "RECURRENT", now - 200 * DAY, now - 6 * DAY, [
     { itemId: itEjecutivo.id, at: now - 6 * DAY },
   ]);
-  const diego = customer("Diego", "Restrepo", "+51 913 404 120", null, "INSTAGRAM", "REQUESTED_RESERVATION", now - 1 * DAY, now - 38 * MIN, [
-    { itemId: itCena.id, at: now - 40 * MIN },
+  const diego = customer("Diego", "Restrepo", "+51 913 404 120", null, "INSTAGRAM", "REQUESTED_RESERVATION", now - 1 * DAY, now - 5 * MIN, [
+    { itemId: itCena.id, at: now - 9 * MIN },
   ]);
   const valentina = customer("Valentina", "Ríos", "+51 905 600 318", "vrios@correo.pe", "FACEBOOK", "CONFIRMED", now - 15 * DAY, now - 7 * DAY);
   const sinNombre = customer(null, null, "+51912345678", null, "WHATSAPP", "NEW", now - 40 * MIN, now - 40 * MIN);
   // Messenger sin nombre de perfil: ni nombre, ni teléfono, ni correo.
   const messengerSinNombre = customer(null, null, null, null, "FACEBOOK", "NEW", now - 25 * MIN, now - 25 * MIN, [], "5893120476618842");
+  // Flujo del propietario (10/11).
+  const sofia = customer("Sofía", "Paredes", "+51 945 210 377", null, "WHATSAPP", "REQUESTED_RESERVATION", now - 26 * HOUR - 8 * MIN, now - 24 * HOUR - 40 * MIN);
+  const gabriel = customer("Gabriel", "Soto", "+51 956 330 118", "gsoto@correo.pe", "WHATSAPP", "REQUESTED_RESERVATION", now - 5 * HOUR - 10 * MIN, now - 4 * HOUR);
+  const patricia = customer("Patricia Lozano", null, "+51 987 450 221", "patricia.lozano@correo.pe", "WEBSITE", "REQUESTED_RESERVATION", now - 27 * HOUR, now - 27 * HOUR);
+  const rocio = customer("Rocío Vela", null, "+51 934 118 602", "rocio.vela@correo.pe", "WEBSITE", "REQUESTED_RESERVATION", now - 90 * MIN, now - 90 * MIN);
 
   const filler = [
     customer("Familia", "Gómez", "+51 902 110 455", null, "WHATSAPP", "RECURRENT", now - 300 * DAY, now - 9 * DAY),
@@ -284,40 +352,48 @@ export function buildSeed(now: number = Date.now()): MockStore {
   const [gomez, mejia, pardo, cano, rojas, leon, herrera, ...pool] = filler;
 
   // ---------------------------------------------------------------- solicitudes y reservas
-  const requests: MockRequest[] = [];
-  const reservations: MockReservation[] = [];
-  let reqSeq = 400;
-  let resSeq = 200;
   const year = new TZDate(now, MOCK_TIME_ZONE).getFullYear();
 
   const request = (
     num: number,
     c: MockCustomer,
-    status: ReservationRequestStatus,
-    at: number | null,
-    people: number | null,
-    itemRef: CommercialItem | null,
-    comments: string | null,
-    createdAgoMin: number,
-    updatedAgoMin: number,
+    init: {
+      status: ReservationRequestStatus;
+      at: number | null;
+      people: number | null;
+      item: CommercialItem | null;
+      comments?: string | null;
+      special?: string | null;
+      created: number;
+      updated?: number;
+      channel?: ContactChannel;
+      conversation?: MockConversation | null;
+      externalReference?: string | null;
+    },
   ): MockRequest => {
     const r: MockRequest = {
       id: uuid(),
       code: `RES-${year}-${String(num).padStart(6, "0")}`,
+      externalReference: init.externalReference ?? null,
       customerId: c.id,
-      commercialItemId: itemRef?.id ?? null,
-      sourceChannel: c.sourceChannel,
-      reservationAt: at === null ? null : iso(at),
-      numberOfPeople: people,
+      commercialItemId: init.item?.id ?? null,
+      conversationId: init.conversation?.id ?? null,
+      sourceChannel: init.channel ?? init.conversation?.channel ?? c.sourceChannel,
+      reservationAt: init.at === null ? null : iso(init.at),
+      numberOfPeople: init.people,
       quotedPrice: null,
       currency: null,
-      comments,
-      specialRequirements: null,
-      status,
-      createdAt: iso(now - createdAgoMin * MIN),
-      updatedAt: iso(now - updatedAgoMin * MIN),
+      comments: init.comments ?? null,
+      specialRequirements: init.special ?? null,
+      status: init.status,
+      createdAt: iso(init.created),
+      updatedAt: iso(init.updated ?? init.created),
+      statusHistory: [],
+      ownerMessageId: null,
+      customerNoticeMessageId: null,
+      customerNoticeError: null,
     };
-    reqSeq = Math.max(reqSeq, num);
+    store.sequences.request = Math.max(store.sequences.request, num);
     requests.push(r);
     return r;
   };
@@ -331,11 +407,11 @@ export function buildSeed(now: number = Date.now()): MockStore {
     status: ReservationStatus | null,
     fromRequest: MockRequest | null = null,
   ): MockReservation => {
-    resSeq += 1;
+    store.sequences.reservation += 1;
     const created = Math.min(now - 2 * HOUR, at - 2 * DAY);
     const r: MockReservation = {
       id: uuid(),
-      code: `R-${new TZDate(created, MOCK_TIME_ZONE).getFullYear()}-${String(resSeq).padStart(6, "0")}`,
+      code: `R-${new TZDate(created, MOCK_TIME_ZONE).getFullYear()}-${String(store.sequences.reservation).padStart(6, "0")}`,
       reservationRequestId: fromRequest?.id ?? null,
       customerId: c.id,
       commercialItemId: itemRef?.id ?? null,
@@ -353,17 +429,60 @@ export function buildSeed(now: number = Date.now()): MockStore {
     return r;
   };
 
-  // Escenarios del mockup (semana actual: 0 = lunes … 6 = domingo).
-  request(461, maria, "WAITING_RESPONSE", weekDayAt(now, 4, "20:00"), 6, itCena, "Terraza. Cumpleaños, pide torta de chocolate.", 4, 2);
-  request(460, diego, "WAITING_RESPONSE", weekDayAt(now, 5, "21:00"), 2, itCena, "Salón.", 45, 38);
-  const reqAndrea = request(458, andrea, "ACCEPTED", weekDayAt(now, 5, "13:00"), 2, itAlmuerzo, "Salón.", 80, 66);
-  request(455, jorge, "CANCELLED", dayOfYear(now, 7, 8, "20:00"), 4, itCena, "Salón principal. Cancelada por el cliente.", 72 * 24 * 60, 5 * 60);
-  request(449, ricardo, "REJECTED", weekDayAt(now, 6, "14:00"), 8, itAlmuerzo, "Terraza. Sin cupo en terraza.", 28 * 60, 27 * 60);
-  const reqValentina = request(447, valentina, "ACCEPTED", weekDayAt(now, 2, "19:30"), 4, itCena, "Salón. Silla para bebé.", 8 * 24 * 60, 8 * 24 * 60 - 8);
-  const reqPaola = request(440, paola, "ACCEPTED", weekDayAt(now, 3, "19:00"), 3, itCena, "Salón.", 9 * 24 * 60, 9 * 24 * 60 - 12);
-  const reqFelipe = request(438, felipe, "ACCEPTED", weekDayAt(now, 1, "13:30"), 5, itEjecutivo, "Salón. Factura a empresa.", 10 * 24 * 60, 10 * 24 * 60 - 5);
-  request(431, camilaV, "REJECTED", weekDayAt(now, 0, "20:00"), 2, itCena, "Terraza.", 4 * 24 * 60, 4 * 24 * 60 - 41);
-  request(312, jorge, "REJECTED", dayOfYear(now - 330 * DAY, 10, 2, "20:00"), 6, itCena, null, 345 * 24 * 60, 345 * 24 * 60);
+  // Escenarios del mockup (semana actual: 0 = lunes … 6 = domingo). Anteriores al 10/11: historial vacío.
+  const reqAndrea = request(458, andrea, { status: "ACCEPTED", at: weekDayAt(now, 5, "13:00"), people: 2, item: itAlmuerzo, comments: "Salón.", created: now - 80 * MIN, updated: now - 66 * MIN });
+  const reqJorge = request(455, jorge, {
+    status: "READY_TO_SEND",
+    at: dayOfYear(now, 7, 8, "20:00"),
+    people: 4,
+    item: itCena,
+    comments: "Salón principal.",
+    created: now - 72 * DAY,
+    updated: now - 72 * DAY,
+  });
+  // Cancelada en el CRM con motivo (USER).
+  changeStatus(reqJorge, "CANCELLED", { type: "USER", id: operator.id }, "El cliente canceló por la web.", now - 5 * HOUR);
+  const reqValentina = request(447, valentina, { status: "ACCEPTED", at: weekDayAt(now, 2, "19:30"), people: 4, item: itCena, comments: "Salón. Silla para bebé.", created: now - 8 * DAY, updated: now - 8 * DAY + 8 * MIN });
+  const reqPaola = request(440, paola, { status: "ACCEPTED", at: weekDayAt(now, 3, "19:00"), people: 3, item: itCena, comments: "Salón.", created: now - 9 * DAY, updated: now - 9 * DAY + 12 * MIN });
+  // Aprobada en el CRM (USER, sin aviso automático: customerNoticeMessage y customerNoticeError en null).
+  const reqFelipe = request(438, felipe, {
+    status: "READY_TO_SEND",
+    at: weekDayAt(now, 1, "13:30"),
+    people: 5,
+    item: itEjecutivo,
+    comments: "Salón. Factura a empresa.",
+    special: "Salón. Factura a empresa.",
+    created: now - 10 * DAY,
+  });
+  changeStatus(reqFelipe, "ACCEPTED", { type: "USER", id: admin.id }, null, now - 10 * DAY + 5 * MIN);
+  // Rechazada en el CRM por el propietario (USER, con motivo).
+  const reqCamila = request(431, camilaV, { status: "READY_TO_SEND", at: weekDayAt(now, 0, "20:00"), people: 2, item: itCena, comments: "Terraza.", created: now - 4 * DAY });
+  changeStatus(reqCamila, "REJECTED", { type: "USER", id: owner.id }, "Sin cupo en terraza ese día.", now - 4 * DAY + 41 * MIN);
+  request(312, jorge, { status: "REJECTED", at: dayOfYear(now - 330 * DAY, 10, 2, "20:00"), people: 6, item: itCena, created: now - 345 * DAY });
+  // Creada a mano por teléfono: INCOMPLETE_DATA → READY_TO_SEND al completar las personas (USER). No se envía al propietario.
+  const reqNatalia = request(469, natalia, {
+    status: "INCOMPLETE_DATA",
+    at: daysAhead(now, 3, "20:00"),
+    people: null,
+    item: itSalon,
+    comments: "Llamó por teléfono: aniversario, prefiere una mesa tranquila.",
+    created: now - 50 * MIN,
+    channel: "PHONE",
+  });
+  reqNatalia.numberOfPeople = 2;
+  changeStatus(reqNatalia, "READY_TO_SEND", { type: "USER", id: operator.id }, null, now - 45 * MIN);
+  // De la web, con datos que no se entendieron: INCOMPLETE_DATA, sin historial.
+  request(468, rocio, {
+    status: "INCOMPLETE_DATA",
+    at: null,
+    people: null,
+    item: null,
+    comments: "Queremos celebrar un cumpleaños\nPaís: Perú\nFecha: el sábado\nPersonas: 2-3\nCRM: no se le escribió por WhatsApp: faltan la fecha, la hora o las personas.",
+    special: "Mesa en terraza",
+    created: now - 90 * MIN,
+    channel: "WEBSITE",
+    externalReference: webCode(now - 90 * MIN, "4C7D21"),
+  });
 
   reservation(gomez!, weekDayAt(now, 0, "13:00"), 4, itAlmuerzo, "Salón.", null);
   reservation(mejia!, weekDayAt(now, 0, "20:30"), 2, itCena, "Terraza. Aniversario.", null);
@@ -404,56 +523,50 @@ export function buildSeed(now: number = Date.now()): MockStore {
   reservation(pool[0]!, weekDayAt(now, 3, "13:00"), 3, itAlmuerzo, "Cancelada por el cliente.", "CANCELLED");
 
   // ---------------------------------------------------------------- conversaciones y mensajes
-  const conversations: MockConversation[] = [];
-  const messages: Message[] = [];
-  const drafts: SamantaDraft[] = [];
-  const idempotency: MockStore["idempotency"] = new Map();
   const knowledge = knowledgeHash({ config, categories, items });
 
+  /** Datos del borrador AUTO de una línea «S». */
+  interface AutoExtra {
+    outcome?: SamantaReservationOutcome;
+    proposal?: SamantaReservationProposal;
+    requiresHuman?: boolean;
+  }
   /**
-   * c = cliente, s = Samanta, a = equipo (autor opcional; por defecto, Camila).
-   * Como en bk-crm, todo OUTBOUND tiene autor. Samanta v1 solo redacta en WhatsApp: su mensaje sale de un
-   * borrador APPROVED por el responsable de la conversación (o el ADMIN si no tiene) y lleva a esa persona
-   * como autora. En los demás canales, las líneas «s» son respuestas del equipo.
+   * c = cliente, s = Samanta manual, S = Samanta automática, a = equipo (autor opcional; por defecto, Camila).
+   * Como en bk-crm, todo OUTBOUND tiene autor:
+   * - «s»: en WhatsApp sale de un borrador MANUAL APPROVED por el responsable de la conversación (o el ADMIN si
+   *   no tiene) y lleva a esa persona como autora; en los demás canales es una respuesta del equipo.
+   * - «S»: borrador AUTO APPROVED por SAMANTA_USER_ID, que también es el autor del OUTBOUND (cualquier canal).
    */
-  type Line = ["c" | "s" | "a", string, number, ...([string] | [])];
-  const conversation = (
-    c: MockCustomer,
-    channel: ContactChannel,
-    lines: Line[],
-    opts: { unread?: number; paused?: boolean; assignee?: MockUser | null } = {},
-  ): MockConversation => {
-    const conv: MockConversation = {
-      id: uuid(),
-      customerId: c.id,
-      channel,
-      isAssistantPaused: opts.paused ?? false,
-      assignedUserId: opts.assignee?.id ?? null,
-      lastMessageAt: null,
-      createdAt: iso(lines[0]![2]),
-      updatedAt: iso(lines[lines.length - 1]![2]),
-    };
+  type Line = ["c", string, number] | ["s", string, number] | ["a", string, number, string?] | ["S", string, number, AutoExtra?];
+
+  const say = (conv: MockConversation, lines: Line[], opts: { unread?: number } = {}) => {
     const inboundIdx = lines.map((l, i) => (l[0] === "c" ? i : -1)).filter((i) => i >= 0);
     const unreadFrom = inboundIdx.length - (opts.unread ?? 0);
-    const own: Message[] = [];
-    lines.forEach(([kind, text, at, authorId], index) => {
+    lines.forEach((line, index) => {
+      const [kind, text, at] = line;
       const inbound = kind === "c";
-      const inboundOrder = inboundIdx.indexOf(index);
-      const unread = inbound && inboundOrder >= unreadFrom;
-      const bySamanta = kind === "s" && channel === "WHATSAPP";
+      const auto = kind === "S";
+      const manual = kind === "s" && conv.channel === "WHATSAPP";
+      const unread = inbound && inboundIdx.indexOf(index) >= unreadFrom;
       const authorUserId = inbound
         ? null
-        : kind === "a"
-          ? (authorId ?? operator.id)
-          : bySamanta
-            ? (opts.assignee?.id ?? admin.id)
-            : (opts.assignee?.id ?? operator.id);
+        : auto
+          ? SAMANTA_USER_ID
+          : kind === "a"
+            ? (line[3] ?? operator.id)
+            : manual
+              ? (conv.assignedUserId ?? admin.id)
+              : (conv.assignedUserId ?? operator.id);
+      const source = [...messages]
+        .filter((m) => m.conversationId === conv.id && m.direction === "INBOUND")
+        .sort((a, b) => b.sequence - a.sequence)[0];
       const message: Message = {
         id: uuid(),
         conversationId: conv.id,
-        channel,
-        sequence: index + 1,
-        externalMessageId: inbound ? `mock-in-${conv.id.slice(0, 8)}-${index}` : `mock-out-${conv.id.slice(0, 8)}-${index}`,
+        channel: conv.channel,
+        sequence: lastSequence(store, conv.id) + 1,
+        externalMessageId: inbound ? `mock-in-${conv.id.slice(0, 8)}-${index}-${at}` : `mock-out-${conv.id.slice(0, 8)}-${index}-${at}`,
         direction: inbound ? "INBOUND" : "OUTBOUND",
         status: inbound ? "PROCESSED" : "DELIVERED",
         type: "TEXT",
@@ -473,9 +586,7 @@ export function buildSeed(now: number = Date.now()): MockStore {
         attachments: [],
       };
       messages.push(message);
-      const source = [...own].reverse().find((m) => m.direction === "INBOUND");
-      own.push(message);
-      if (bySamanta && source) {
+      if (manual && source) {
         const draft = approvedDraft({
           source,
           outbound: message,
@@ -488,20 +599,70 @@ export function buildSeed(now: number = Date.now()): MockStore {
         drafts.push(draft);
         idempotency.set(`${conv.id}:${RESERVED_IDEMPOTENCY_PREFIX}${draft.id}`, { messageId: message.id, authorUserId: authorUserId!, content: text });
       }
+      if (auto && source) {
+        const extra = (line[3] ?? {}) as AutoExtra;
+        drafts.push(
+          autoDraft({
+            source,
+            outbound: message,
+            knowledgeHash: knowledge,
+            reservationOutcome: extra.outcome ?? null,
+            reservationProposal: extra.proposal ?? null,
+            requiresHuman: extra.requiresHuman,
+          }),
+        );
+      }
+      if (Date.parse(conv.lastMessageAt ?? "1970-01-01T00:00:00.000Z") < at) conv.lastMessageAt = iso(at);
+      if (Date.parse(conv.updatedAt) < at) conv.updatedAt = iso(at);
     });
-    conv.lastMessageAt = iso(lines[lines.length - 1]![2]);
+  };
+
+  const conversation = (
+    c: MockCustomer,
+    channel: ContactChannel,
+    lines: Line[],
+    opts: { unread?: number; paused?: AssistantPauseReason; assignee?: MockUser | null } = {},
+  ): MockConversation => {
+    const last = lines[lines.length - 1]![2];
+    const conv: MockConversation = {
+      id: uuid(),
+      customerId: c.id,
+      channel,
+      isAssistantPaused: opts.paused !== undefined,
+      assistantPauseReason: opts.paused ?? null,
+      assistantPausedAt: opts.paused ? iso(last) : null,
+      assignedUserId: opts.assignee?.id ?? null,
+      lastMessageAt: null,
+      createdAt: iso(lines[0]![2]),
+      updatedAt: iso(lines[0]![2]),
+    };
     conversations.push(conv);
+    say(conv, lines, opts);
     return conv;
   };
 
-  conversation(maria, "WHATSAPP", [
-    ["c", "Hola, quiero reservar para el viernes en la noche, somos 6", now - 5 * MIN],
-    ["s", "¡Hola María! Con gusto. Tenemos disponibilidad a las 19:30 o 20:00, en salón o terraza. ¿Cuál prefieres?", now - 5 * MIN + 20_000],
-    ["c", "A las 8 en terraza. Es un cumpleaños, ¿pueden poner una torta?", now - 3 * MIN],
-    ["s", "Perfecto. Podemos incluir torta de chocolate por S/ 45.00. Te confirmo: viernes, 20:00, 6 personas, terraza, con torta. ¿Es correcto?", now - 3 * MIN + 20_000],
-    ["c", "Sí, perfecto", now - 2 * MIN],
-    ["s", "Listo, envié tu solicitud. Te aviso apenas el restaurante la confirme.", now - 2 * MIN + 15_000],
-  ], { unread: 2 });
+  /** Resumen de Samanta (PROPOSED) y su `reservationProposal`. */
+  const proposal = (at: number, people: number, itemRef: CommercialItem | null, special: string | null): { text: string; extra: AutoExtra } => {
+    const { date, time } = dayAndTime(iso(at), MOCK_TIME_ZONE);
+    return {
+      text: samantaTexts.proposal({ date, time, people, service: itemRef?.nameEs ?? null, specialRequirements: special }),
+      extra: {
+        outcome: "PROPOSED",
+        proposal: { date: localDate(at), time, people, commercialItemId: itemRef?.id ?? null, service: itemRef?.nameEs ?? null, specialRequirements: special, language: "es" },
+      },
+    };
+  };
+  const createdText = (code: number, at: number, people: number) => {
+    const { date, time } = dayAndTime(iso(at), MOCK_TIME_ZONE);
+    return samantaTexts.created(`RES-${year}-${String(code).padStart(6, "0")}`, { date, time, people });
+  };
+  /** Solicitud que registra Samanta al confirmar el cliente: READY_TO_SEND, vinculada a la conversación. */
+  const samantaRequest = (num: number, c: MockCustomer, conv: MockConversation, at: number, people: number, itemRef: CommercialItem | null, special: string | null, created: number) => {
+    const r = request(num, c, { status: "READY_TO_SEND", at, people, item: itemRef, special, comments: SAMANTA_REQUEST_NOTE, created, conversation: conv });
+    const summary = [...drafts].reverse().find((d) => d.conversationId === conv.id && d.reservationOutcome === "PROPOSED");
+    if (summary) summary.reservationRequestId = r.id;
+    return r;
+  };
 
   conversation(carlos, "FACEBOOK", [
     ["c", "¿Tienen mesa para hoy a las 9?", now - 16 * MIN],
@@ -520,7 +681,7 @@ export function buildSeed(now: number = Date.now()): MockStore {
   conversation(tauro, "WHATSAPP", [
     ["c", "Necesitamos cotización para cena de fin de año, 40 personas", now - 3 * HOUR - 2 * MIN],
     ["s", "Con gusto. Para grupos de más de 20 personas un asesor prepara la propuesta. Te transfiero ahora.", now - 3 * HOUR],
-  ], { unread: 1, paused: true, assignee: operator });
+  ], { unread: 1, paused: "SAMANTA_HANDOFF", assignee: operator });
 
   conversation(jorge, "WEBSITE", [
     ["c", "Quisiera cancelar mi reserva del sábado", now - 5 * HOUR - 4 * MIN],
@@ -536,12 +697,6 @@ export function buildSeed(now: number = Date.now()): MockStore {
     ["s", "Hoy tenemos lomo al grill con papas nativas y ensalada, S/ 38.00. ¿Te ayudo con una reserva?", daysAgoAt(now, 1, "12:30") + 20_000],
   ]);
 
-  conversation(ricardo, "INSTAGRAM", [
-    ["c", "Reserva para 8 el domingo a las 2 en terraza", daysAgoAt(now, 1, "10:02")],
-    ["s", "Ricardo, la terraza no tiene cupo ese horario. Puedo ofrecerte salón principal a las 14:00 o terraza a las 16:00.", daysAgoAt(now, 1, "10:30")],
-    ["c", "No podré asistir, gracias", daysAgoAt(now, 1, "11:15")],
-  ]);
-
   conversation(paola, "FACEBOOK", [
     ["c", "¿Me confirman la reserva del jueves?", daysAgoAt(now, 2, "09:10")],
     ["s", "Confirmado para el jueves a las 19:00, 3 personas.", daysAgoAt(now, 2, "09:22")],
@@ -550,19 +705,103 @@ export function buildSeed(now: number = Date.now()): MockStore {
 
   conversation(messengerSinNombre, "FACEBOOK", [["c", "Hola, ¿tienen estacionamiento cerca?", now - 25 * MIN]], { unread: 1 });
 
-  return {
-    users,
-    sessions: [],
-    config,
-    categories,
-    items,
-    customers,
-    requests,
-    reservations,
-    conversations,
-    messages,
-    drafts,
-    idempotency,
-    sequences: { request: reqSeq, reservation: resSeq },
-  };
+  // ---------------------------------------------------------------- flujo del propietario, en orden cronológico
+
+  // Ricardo (Instagram): Samanta registra la solicitud; se envía al propietario y WhatsApp la entrega y la lee.
+  const tRicardo = now - 29 * HOUR;
+  const atRicardo = daysAhead(now, 4, "14:00");
+  const pRicardo = proposal(atRicardo, 8, itAlmuerzo, "Terraza");
+  const convRicardo = conversation(ricardo, "INSTAGRAM", [
+    ["c", "Hola, quiero reservar almuerzo para 8 personas, en 4 días a las 2 de la tarde, en terraza", tRicardo - 6 * MIN],
+    ["S", pRicardo.text, tRicardo - 6 * MIN + 10_000, pRicardo.extra],
+    ["c", "Sí, confírmalo", tRicardo - 1 * MIN],
+    ["S", createdText(449, atRicardo, 8), tRicardo - 1 * MIN + 10_000, { outcome: "CREATED" }],
+  ]);
+  const reqRicardo = samantaRequest(449, ricardo, convRicardo, atRicardo, 8, itAlmuerzo, "Terraza", tRicardo - 1 * MIN + 10_000);
+  sendToOwner(store, reqRicardo, tRicardo + 15_000, { finalStatus: "READ", acceptedAfterMs: 2_000 });
+
+  // Patricia (web): la plantilla al propietario falla y la solicitud vuelve a READY_TO_SEND (no se reenvía).
+  const tPatricia = now - 27 * HOUR;
+  const reqPatricia = request(466, patricia, {
+    status: "READY_TO_SEND",
+    at: daysAhead(now, 5, "19:30"),
+    people: 4,
+    item: itCena,
+    comments: "Es el cumpleaños de mi mamá\nPaís: Perú",
+    special: "Mesa junto a la ventana",
+    created: tPatricia,
+    channel: "WEBSITE",
+    externalReference: webCode(tPatricia, "9E49B1"),
+  });
+  sendToOwner(store, reqPatricia, tPatricia + 20_000, { accepted: false });
+  ownerMessageFailed(store, reqPatricia, "FAILED", "WHATSAPP_SEND_REJECTED", tPatricia + 2 * MIN);
+
+  // Sofía (WhatsApp): el propietario acepta → reserva CONFIRMED y aviso entregado; luego un «sí» tardío (ALREADY_DECIDED).
+  const tSofia = now - 26 * HOUR;
+  const atSofia = daysAhead(now, 2, "20:00");
+  const pSofia = proposal(atSofia, 4, itCena, null);
+  const convSofia = conversation(sofia, "WHATSAPP", [
+    ["c", "Hola, quiero reservar una cena para 4 personas, pasado mañana a las 8 de la noche", tSofia - 8 * MIN],
+    ["S", pSofia.text, tSofia - 8 * MIN + 10_000, pSofia.extra],
+    ["c", "Sí", tSofia - 2 * MIN],
+    ["S", createdText(462, atSofia, 4), tSofia - 2 * MIN + 10_000, { outcome: "CREATED" }],
+  ]);
+  const reqSofia = samantaRequest(462, sofia, convSofia, atSofia, 4, itCena, null, tSofia - 2 * MIN + 10_000);
+  sendToOwner(store, reqSofia, tSofia + 15_000, { finalStatus: "READ", acceptedAfterMs: 2_000 });
+  ownerReply(store, reqSofia, "ACEPTAR", tSofia + 1 * HOUR);
+  say(convSofia, [
+    ["c", "Sí, confirmo", tSofia + 1 * HOUR + 20 * MIN],
+    ["S", alreadyDecidedText(store, reqSofia)!.text, tSofia + 1 * HOUR + 20 * MIN + 10_000, { outcome: "ALREADY_DECIDED" }],
+  ]);
+
+  // Gabriel (WhatsApp): el propietario propone un cambio → MODIFICATION_REQUESTED, aviso y pausa SAMANTA_HANDOFF.
+  const tGabriel = now - 5 * HOUR;
+  const atGabriel = daysAhead(now, 3, "20:00");
+  const pGabriel = proposal(atGabriel, 6, itCena, "Salón");
+  const convGabriel = conversation(gabriel, "WHATSAPP", [
+    ["c", "Buenas, quiero reservar una cena para 6 en el salón, en 3 días a las 8 pm", tGabriel - 10 * MIN],
+    ["S", pGabriel.text, tGabriel - 10 * MIN + 10_000, pGabriel.extra],
+    ["c", "Sí, perfecto", tGabriel - 3 * MIN],
+    ["S", createdText(465, atGabriel, 6), tGabriel - 3 * MIN + 10_000, { outcome: "CREATED" }],
+  ]);
+  const reqGabriel = samantaRequest(465, gabriel, convGabriel, atGabriel, 6, itCena, "Salón", tGabriel - 3 * MIN + 10_000);
+  sendToOwner(store, reqGabriel, tGabriel + 15_000, { finalStatus: "DELIVERED", acceptedAfterMs: 2_000 });
+  ownerReply(store, reqGabriel, "PROPONER CAMBIO", tGabriel + 50 * MIN);
+  ownerProposal(store, reqGabriel, "Mejor a las 21:30: a las 20:00 el salón está completo.", tGabriel + 53 * MIN);
+  say(convGabriel, [["c", "Ok, ¿qué horario me proponen?", tGabriel + 60 * MIN]], { unread: 1 });
+
+  // Ricardo: el propietario rechaza; Instagram no admite plantillas y la ventana se cerró → WINDOW_CLOSED.
+  ownerReply(store, reqRicardo, "RECHAZAR", now - 3 * HOUR);
+
+  // Diego (Instagram): recién registrada; la plantilla al propietario sigue en cola (SENT_TO_OWNER).
+  const atDiego = daysAhead(now, 4, "21:00");
+  const pDiego = proposal(atDiego, 2, itCena, "Salón");
+  const convDiego = conversation(diego, "INSTAGRAM", [
+    ["c", "Hola, ¿tienen mesa en salón para 2 en 4 días a las 9 pm?", now - 9 * MIN],
+    ["S", pDiego.text, now - 9 * MIN + 10_000, pDiego.extra],
+    ["c", "Sí", now - 5 * MIN],
+    ["S", createdText(460, atDiego, 2), now - 5 * MIN + 10_000, { outcome: "CREATED" }],
+  ]);
+  const reqDiego = samantaRequest(460, diego, convDiego, atDiego, 2, itCena, "Salón", now - 5 * MIN + 10_000);
+  sendToOwner(store, reqDiego, now - 3 * MIN, { accepted: false });
+
+  // María (WhatsApp): registrada por Samanta y entregada al propietario (WAITING_RESPONSE).
+  const atMaria = daysAhead(now, 3, "20:00");
+  const pMaria = proposal(atMaria, 6, itCena, "Terraza. Cumpleaños, torta de chocolate.");
+  const convMaria = conversation(maria, "WHATSAPP", [
+    ["c", "Hola, quiero reservar en 3 días en la noche, somos 6", now - 8 * MIN],
+    ["S", "¡Hola María! Con gusto. ¿A qué hora te gustaría? Tenemos mesas a las 19:30 o 20:00, en salón o terraza.", now - 8 * MIN + 10_000],
+    ["c", "A las 8 en terraza. Es un cumpleaños, ¿pueden poner una torta?", now - 5 * MIN],
+    ["S", pMaria.text, now - 5 * MIN + 10_000, pMaria.extra],
+    ["c", "Sí, perfecto", now - 2 * MIN],
+    ["S", createdText(461, atMaria, 6), now - 2 * MIN + 10_000, { outcome: "CREATED" }],
+  ], { unread: 2 });
+  const reqMaria = samantaRequest(461, maria, convMaria, atMaria, 6, itCena, "Terraza. Cumpleaños, torta de chocolate.", now - 2 * MIN + 10_000);
+  sendToOwner(store, reqMaria, now - 90_000, { finalStatus: "DELIVERED", acceptedAfterMs: 2_000 });
+
+  // El equipo ya leyó las respuestas del propietario.
+  const ownerConv = ownerConversation(store, now);
+  for (const m of messages) if (m.conversationId === ownerConv.id && m.direction === "INBOUND") m.readAt ??= iso(Date.parse(m.createdAt) + MIN);
+
+  return store;
 }

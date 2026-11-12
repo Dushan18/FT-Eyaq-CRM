@@ -21,6 +21,7 @@ import {
   type CurrencyCode,
   type Customer,
   type CustomerSummary,
+  REQUEST_REASON_MAX_LENGTH,
   type ReservationRequest,
   type UpdateReservationRequestBody,
 } from "@/lib/api/types";
@@ -29,6 +30,7 @@ import { customerName } from "@/lib/domain/conversation";
 import { isoToZonedInputs } from "@/lib/format/date-inputs";
 import { serverFormErrors } from "@/lib/forms/server-errors";
 import { useRestaurant } from "@/lib/restaurant";
+import { reasonError, reasonValue } from "./request-detail-logic";
 import {
   CURRENCY_OPTIONS,
   REQUEST_TEXT_MAX_LENGTH,
@@ -45,11 +47,13 @@ import {
 
 const linkClass = "font-semibold text-brand hover:underline";
 
-/** Tras guardar: la lista, los KPI y Estadísticas (cuenta solicitudes) se releen. */
+/**
+ * Tras guardar: la lista, los KPI, el detalle y Estadísticas (cuenta solicitudes) se releen. La respuesta
+ * de una escritura no se guarda en qk.request(id): no trae statusHistory (el detalle se vuelve a pedir).
+ */
 function useInvalidateRequests() {
   const queryClient = useQueryClient();
-  return (saved?: ReservationRequest) => {
-    if (saved) queryClient.setQueryData(qk.request(saved.id), saved);
+  return () => {
     void queryClient.invalidateQueries({ queryKey: qk.requestsAll });
     void queryClient.invalidateQueries({ queryKey: qk.statsAll });
   };
@@ -355,7 +359,7 @@ function EditRequestDialogBody({
   const save = useMutation({
     mutationFn: (changes: UpdateReservationRequestBody) => requestsApi.update(request.id, changes),
     onSuccess: (saved) => {
-      invalidate(saved);
+      invalidate();
       onSaved?.(saved);
       onClose();
     },
@@ -432,10 +436,12 @@ function CancelRequestDialogBody({
   onCancelled?: (request: ReservationRequest) => void;
 }) {
   const invalidate = useInvalidateRequests();
+  const [reason, setReason] = useState("");
+  const reasonInvalid = reasonError(reason);
   const cancel = useMutation({
-    mutationFn: () => requestsApi.cancel(request.id),
+    mutationFn: (text: string | null) => requestsApi.cancel(request.id, text ?? undefined),
     onSuccess: (saved) => {
-      invalidate(saved);
+      invalidate();
       onCancelled?.(saved);
       onClose();
     },
@@ -458,7 +464,11 @@ function CancelRequestDialogBody({
           <Button variant="outline" className="h-9 px-3.5" onClick={onClose} disabled={cancel.isPending} data-autofocus>
             Volver
           </Button>
-          <Button className="h-9 px-4" onClick={() => cancel.mutate()} disabled={cancel.isPending}>
+          <Button
+            className="h-9 px-4"
+            onClick={() => !reasonInvalid && cancel.mutate(reasonValue(reason))}
+            disabled={cancel.isPending}
+          >
             {cancel.isPending ? "Cancelando…" : "Cancelar solicitud"}
           </Button>
         </>
@@ -469,6 +479,15 @@ function CancelRequestDialogBody({
           La solicitud de {customerName(request.customer, request.sourceChannel)} pasará a «Cancelada». Es un estado final: no se
           podrá editar ni reactivar.
         </p>
+        <TextAreaField
+          label="Motivo (opcional)"
+          rows={2}
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          maxLength={REQUEST_REASON_MAX_LENGTH}
+          error={reasonInvalid}
+          hint="Queda en el historial de la solicitud."
+        />
         {cancel.isError ? (
           <InlineNotice tone="error">
             No se pudo cancelar. {serverFormErrors(cancel.error, []).form ?? "Inténtalo de nuevo."}

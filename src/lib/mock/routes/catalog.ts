@@ -20,6 +20,7 @@ import {
   boolParam,
   enumParam,
   fail,
+  isUuid,
   json,
   lower,
   normalizeName,
@@ -34,6 +35,9 @@ import {
   type Route,
 } from "../http";
 import { iso, uuid, type MockStore } from "../store";
+
+/** E.164 de `whatsappNumber` y `ownerWhatsappNumber` (máx. 16 con el «+»). */
+const E164_RE = /^\+[1-9]\d{7,14}$/;
 import { categorySummary } from "../views";
 
 // ---------------------------------------------------------------------------- categorías
@@ -375,14 +379,35 @@ export const catalogRoutes: Route[] = [
     access: ADMIN,
     handler: (ctx) => {
       const keys = [
-        "businessName", "logoUrl", "description", "address", "latitude", "longitude", "whatsappNumber", "email", "website",
-        "currency", "timeZone", "reservationPolicy", "cancellationPolicy", "responseTimeoutMinutes", "approvalResponsibleId",
-        "languages", "schedules",
+        "businessName", "logoUrl", "description", "address", "latitude", "longitude", "whatsappNumber", "ownerWhatsappNumber",
+        "email", "website", "currency", "timeZone", "reservationPolicy", "cancellationPolicy", "responseTimeoutMinutes",
+        "approvalResponsibleId", "languages", "schedules",
       ];
       requireBodyKeys(ctx, keys, ["businessName", "address", "whatsappNumber", "email", "currency", "timeZone", "reservationPolicy", "cancellationPolicy", "responseTimeoutMinutes", "languages", "schedules"]);
       const b = ctx.body as Record<string, unknown>;
       const errors: string[] = [];
-      if (!/^\+[1-9]\d{7,14}$/.test(String(b.whatsappNumber))) errors.push("whatsappNumber debe usar formato internacional E.164");
+      const whatsappNumber = String(b.whatsappNumber).trim();
+      if (!E164_RE.test(whatsappNumber)) errors.push("whatsappNumber debe usar formato internacional E.164");
+      // ownerWhatsappNumber (M9.1): omitirlo conserva el valor guardado; null lo borra.
+      let ownerWhatsappNumber: string | null = ctx.store.config?.ownerWhatsappNumber ?? null;
+      if ("ownerWhatsappNumber" in b) {
+        const raw = b.ownerWhatsappNumber;
+        if (raw === null) ownerWhatsappNumber = null;
+        else if (typeof raw !== "string") {
+          errors.push(
+            "ownerWhatsappNumber must be shorter than or equal to 16 characters",
+            "ownerWhatsappNumber debe usar formato internacional E.164",
+            "ownerWhatsappNumber must be a string",
+          );
+        } else {
+          ownerWhatsappNumber = raw.trim();
+          if (ownerWhatsappNumber.length > 16) errors.push("ownerWhatsappNumber must be shorter than or equal to 16 characters");
+          if (!E164_RE.test(ownerWhatsappNumber)) errors.push("ownerWhatsappNumber debe usar formato internacional E.164");
+        }
+      }
+      if (b.approvalResponsibleId !== undefined && b.approvalResponsibleId !== null && !isUuid(b.approvalResponsibleId)) {
+        errors.push("approvalResponsibleId must be a UUID");
+      }
       if (!["PEN", "USD"].includes(String(b.currency))) errors.push("currency must be one of the following values: PEN, USD");
       const timeout = Number(b.responseTimeoutMinutes);
       if (!Number.isInteger(timeout) || timeout < 1 || timeout > 1440) errors.push("responseTimeoutMinutes must not be greater than 1440");
@@ -405,9 +430,13 @@ export const catalogRoutes: Route[] = [
         if (v !== null && v !== undefined && !/^https?:\/\/[^\s/]+\.[^\s/]+/.test(String(v))) errors.push(`${key} must be a URL address`);
       }
       if (errors.length) fail(400, errors);
+      // El negocio no puede escribirse a sí mismo.
+      if (ownerWhatsappNumber !== null && ownerWhatsappNumber === whatsappNumber) fail(400, "ownerWhatsappNumber debe ser distinto de whatsappNumber");
+      // approvalResponsibleId: omitido o null → sin responsable (a diferencia de ownerWhatsappNumber, no se conserva).
       let responsible: RestaurantConfig["approvalResponsible"] = null;
-      if (b.approvalResponsibleId) {
-        const u = ctx.store.users.find((x) => x.id === b.approvalResponsibleId);
+      if (typeof b.approvalResponsibleId === "string") {
+        const id = b.approvalResponsibleId.toLowerCase();
+        const u = ctx.store.users.find((x) => x.id === id);
         if (!u) fail(400, "El responsable de aprobación no existe");
         if (!u.isActive) fail(400, "El responsable de aprobación debe estar activo");
         if (!u.roles.includes("OWNER")) fail(400, "El responsable de aprobación debe tener el rol OWNER");
@@ -422,7 +451,8 @@ export const catalogRoutes: Route[] = [
         address: String(b.address).trim(),
         latitude: (b.latitude as number | null) ?? null,
         longitude: (b.longitude as number | null) ?? null,
-        whatsappNumber: String(b.whatsappNumber),
+        whatsappNumber,
+        ownerWhatsappNumber,
         email: lower(String(b.email)).trim(),
         website: (b.website as string | null) ?? null,
         currency: b.currency as RestaurantConfig["currency"],

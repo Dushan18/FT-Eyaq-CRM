@@ -14,6 +14,8 @@ const conversation: Conversation = {
   customerId: "cu-1",
   channel: "WHATSAPP",
   isAssistantPaused: false,
+  assistantPauseReason: null,
+  assistantPausedAt: null,
   assignedUserId: null,
   lastMessageAt: "2026-10-14T17:00:00.000Z",
   createdAt: "2026-10-14T16:00:00.000Z",

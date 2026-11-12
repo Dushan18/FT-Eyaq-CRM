@@ -41,8 +41,10 @@ function makeRequest(overrides: Partial<ReservationRequest> = {}): ReservationRe
   return {
     id: "c7a3e9f1-4b2d-4e8a-9f60-2d5b8c1e7a93",
     code: "RES-2026-000042",
+    externalReference: null,
     customerId: summary.id,
     commercialItemId: "6a2d9e14-7c3b-4f85-b0e2-1d8c4a9f3e57",
+    conversationId: null,
     sourceChannel: "PHONE",
     reservationAt: "2026-11-08T01:00:00.000Z",
     numberOfPeople: 4,
